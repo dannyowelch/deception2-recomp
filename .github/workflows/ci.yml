@@ -2,7 +2,7 @@
 #
 # That is the one property the whole release story rests on, and it is easy to
 # break by accident -- a using directive in the launcher that reaches into
-# generated/, or a source file dropped into Deception.Launcher/ that the default
+# generated/, or a source file dropped into Deception2.Launcher/ that the default
 # glob then compiles. Neither shows up locally, where generated/ exists.
 name: ci
 
@@ -41,19 +41,19 @@ jobs:
       - name: Assert one source of the version
         run: |
           test ! -e VERSION || { echo "VERSION exists; the tags are the version"; exit 1; }
-          grep -q '<Version>[0-9]' Deception.Launcher/Deception.Launcher.csproj \
+          grep -q '<Version>[0-9]' Deception2.Launcher/Deception2.Launcher.csproj \
             && { echo "the csproj declares a literal version; the tags are the source"; exit 1; } || true
           echo "version=$(bash tools/verdite-core/scripts/version.sh)"
 
       - name: Build the launcher with no disc
-        run: dotnet build Deception.Launcher/Deception.Launcher.csproj -c Release
+        run: dotnet build Deception2.Launcher/Deception2.Launcher.csproj -c Release
 
       # That the number reaches the assembly, which is what the packaging names
       # its files after and what the launcher prints at startup.
       - name: Assert the build carries it
         run: |
           v="$(bash tools/verdite-core/scripts/version.sh)"
-          dll=Deception.Launcher/bin/Release/net10.0/DeceptionLauncher.dll
+          dll=Deception2.Launcher/bin/Release/net10.0/Deception2Launcher.dll
           got=$(strings "$dll" | grep -oE "^$v\+[0-9a-f]{9}$" | head -1)
           echo "informational version: ${got:-<none>}"
           test -n "$got" || { echo "the assembly does not carry $v plus a commit"; exit 1; }
@@ -66,7 +66,7 @@ jobs:
       # file planted there is set aside, not compiled. The launcher is killed by
       # the timeout at the disc picker; the line is printed before the window.
       - name: Publish the launcher
-        run: dotnet publish Deception.Launcher/Deception.Launcher.csproj -c Release -o out
+        run: dotnet publish Deception2.Launcher/Deception2.Launcher.csproj -c Release -o out
 
       - name: Assert the manifest lists exactly the shipped content
         working-directory: out
@@ -114,10 +114,10 @@ jobs:
       - name: Assert a file left by an older release is not built
         run: |
           echo '#error left by an older release' > out/content/src/Stale.cs
-          DECEPTION_DATA="$RUNNER_TEMP/data" DECEPTION_UPDATE_CHECK=0 \
-            timeout 30 dotnet out/DeceptionLauncher.dll > launch.log 2>&1 || true
+          DECEPTION2_DATA="$RUNNER_TEMP/data" DECEPTION2_UPDATE_CHECK=0 \
+            timeout 30 dotnet out/Deception2Launcher.dll > launch.log 2>&1 || true
           head -20 launch.log
-          grep -qx '\[Deception\]   src/Stale.cs' launch.log \
+          grep -qx '\[Deception2\]   src/Stale.cs' launch.log \
             || { echo "the launcher did not set aside a file the release did not ship"; exit 1; }
 
       # The Windows package's root exe is this stub, not the self-contained
@@ -125,7 +125,7 @@ jobs:
       # job that actually publishes the zip. It has no icon: the port ships no
       # mark, and the game points the shortcuts at the card icon it reads.
       - name: Build the Windows stub
-        run: dotnet build tools/verdite-core/packaging/windows/Stub/Verdite.Stub.csproj -c Release -p:StubName=Deception -p:StubChild=DeceptionLauncher
+        run: dotnet build tools/verdite-core/packaging/windows/Stub/Verdite.Stub.csproj -c Release -p:StubName=Deception2 -p:StubChild=Deception2Launcher
 
       # Deception.csproj is deliberately NOT built here: it compiles
       # generated/ and so cannot build without the disc, by design.

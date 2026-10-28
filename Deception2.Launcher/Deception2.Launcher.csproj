@@ -7,25 +7,25 @@
       match Deception.csproj - is in Launcher.targets, shared with the other
       ports. See docs/PACKAGING.md.
 
-      AssemblyName is DeceptionLauncher, not Deception. The game compiled at first
+      AssemblyName is Deception2Launcher, not Deception. The game compiled at first
       run is Deception.dll (GameAssembly, and Deception.csproj), and it is loaded
       into this process's default context. Two assemblies with that simple name
-      cannot both live there. The player-facing stub is still Deception.exe;
+      cannot both live there. The player-facing stub is Deception2.exe;
       packaging/package.env LAUNCHER_ASSEMBLY names the apphost the stub starts.
     -->
     <PropertyGroup>
-        <AssemblyName>DeceptionLauncher</AssemblyName>
-        <RootNamespace>Deception.Launcher</RootNamespace>
-        <VerditeAppId>deception</VerditeAppId>
-        <VerditeEnvPrefix>DECEPTION_</VerditeEnvPrefix>
+        <AssemblyName>Deception2Launcher</AssemblyName>
+        <RootNamespace>Deception2.Launcher</RootNamespace>
+        <VerditeAppId>deception2</VerditeAppId>
+        <VerditeEnvPrefix>DECEPTION2_</VerditeEnvPrefix>
 
         <!--
-          The file icon Explorer shows on DeceptionLauncher.exe. The Windows
-          package's stub reads the same file (packaging/shared/deception.ico).
-          The window wears packaging/shared/deception.png, which Launcher.targets
+          The file icon Explorer shows on Deception2Launcher.exe. The Windows
+          package's stub reads the same file (packaging/shared/deception2.ico).
+          The window wears packaging/shared/deception2.png, which Launcher.targets
           copies beside this executable. Both are made from Icon.jpg.
         -->
-        <ApplicationIcon>..\packaging\shared\deception.ico</ApplicationIcon>
+        <ApplicationIcon>..\packaging\shared\deception2.ico</ApplicationIcon>
     </PropertyGroup>
 
     <Import Project="../tools/verdite-core/launcher/Launcher.targets" />

@@ -30,7 +30,7 @@ per-user recompile reads those LBAs off the player's own image.
 
 | project | builds without the disc | what it is |
 |---|---|---|
-| `Deception.Launcher/Deception.Launcher.csproj` | **yes** | the shipped executable |
+| `Deception2.Launcher/Deception2.Launcher.csproj` | **yes** | the shipped executable |
 | `Deception.csproj` | no | the developer path, unchanged |
 
 They are opposites on purpose. `Deception.csproj` compiles `generated/`
@@ -40,13 +40,14 @@ The launcher compiles neither `generated/` nor `patches/`: King's Field's
 Deception's inputs as *payload* and compiles them at first run.
 
 **The launcher's code is Verdite Core's** (`tools/verdite-core/launcher/`).
-`Deception.Launcher/` holds a csproj that names the executable and imports
+`Deception2.Launcher/` holds a csproj that names the executable and imports
 `Launcher.targets`, and a `Program.cs` that hands `Launcher.Run` this port's
-record: `Deception`/`deception`, `SLUS-00340`, `Deception.json`, game assembly
-`Deception`, `dannyowelch/deception-recomp` (notify only), and which overlays
-are play. The launcher assembly itself is `DeceptionLauncher`, because the game
-dll is `Deception.dll` and both cannot share a simple name in the default load
-context. The player-facing Windows stub is still `Deception.exe`. Everything
+record: `Deception2`/`deception2`, `SLUS-00677`, `Deception.json`, game assembly
+`Deception`, `dannyowelch/deception2-recomp` (notify only). No overlay is treated
+as play: the names in the config are still Tecmo's Deception. The launcher
+assembly itself is `Deception2Launcher`, because the game dll is `Deception.dll`
+and both cannot share a simple name in the default load context. The
+player-facing Windows stub is `Deception2.exe`. Everything
 below that names a launcher file (`Paths`, `DiscCheck`, `BuildKey`, `Recompile`,
 `GameCompile`, `UpdateCheck`, the popups) means core's copy. The disc files the
 check requires, and the bytes the build key hashes, are every overlay `file` in
@@ -113,11 +114,11 @@ version.txt            the tag, MAJOR.MINOR.PATCH (0.0.0 with no version tag)
 `tools/RecompOne/patches/0033` embeds Noto Sans in `RecompOne.Runtime.dll`, and
 SIL OFL 1.1 requires that licence to travel with the font. Both packaging
 scripts stage the four files under `licenses/` (and, in the AppImage, the same
-four under `usr/share/doc/deception/`). `version.txt` is the same number the
+four under `usr/share/doc/deception2/`). `version.txt` is the same number the
 zip and the AppImage are named with. Adding a third-party asset to the build
 means adding its licence here.
 
-`UpdateCheck` reads `https://api.github.com/repos/dannyowelch/deception-recomp/releases/latest`
+`UpdateCheck` reads `https://api.github.com/repos/dannyowelch/deception2-recomp/releases/latest`
 and only notifies. It does not download a release.
 
 ## First run
@@ -128,22 +129,23 @@ and only notifies. It does not download a release.
    `interface.ini`, `carda.sav`, `cardb.sav`, `carda.fog`, `mods/.cache` — so they
    all resolve there and none of them needed a patch.
 
-   `%LOCALAPPDATA%\Deception`, or `$XDG_DATA_HOME/deception` else
-   `~/.local/share/deception`. `DECEPTION_DATA` overrides it.
+   `%LOCALAPPDATA%\Deception2`, or `$XDG_DATA_HOME/deception2` else
+   `~/.local/share/deception2`. `DECEPTION2_DATA` overrides it.
 
    A later release does not replace `settings.json`, `interface.ini`, `carda.sav`,
    or `cardb.sav`. On startup, settings this version adds are written into the
-   existing files; a value already there stays. When the Deception folder is
+   existing files; a value already there stays. When the Deception2 folder is
    missing one of those files, it is copied from `%LOCALAPPDATA%\Verdite2` (and
    the older King's Field folder names, or `~/.local/share/verdite2`) and not
-   replaced if it is already there. `DECEPTION_DATA` skips that copy. The package
+   replaced if it is already there. `DECEPTION2_DATA` skips that copy. The package
    build fails if a player file is staged into the zip or the AppImage, so
    unpacking a release cannot overwrite one.
 
 2. `Runtime.DiscValidator = DiscCheck.Validate`. It checks `SYSTEM.CNF` boots
-   `SLUS_003.40` and that every file `Deception.json` slices is present and at
-   least as long as its furthest slice. King's Field `SLUS-00158` and
-   `SLUS-00255` are named; any other serial is refused as not this disc.
+   `SLUS_006.77` and that every file `Deception.json` slices is present and at
+   least as long as its furthest slice. Tecmo's Deception `SLUS-00340`, the
+   Kagero demo `SLUS-90041`, and King's Field `SLUS-00158` and `SLUS-00255` are
+   named; any other serial is refused as not this disc.
 
 3. `Runtime.WaitForValidDisc()` — the runtime's own picker, which already opens a
    native file dialog and saves the accepted path. It needed nothing but the

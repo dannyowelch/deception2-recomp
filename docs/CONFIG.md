@@ -119,7 +119,7 @@ The window opens windowed, with the menu bar shown, so the area under the bar ma
 
 ## Updates and backups
 
-A new release does not replace `carda.sav`, `cardb.sav`, `settings.json`, or `interface.ini`. The packaged game keeps them in `%LOCALAPPDATA%\Deception` on Windows and in `$XDG_DATA_HOME/deception`, or `~/.local/share/deception`, on Linux. `DECEPTION_DATA` overrides that folder and is not filled from the one above.
+A new release does not replace `carda.sav`, `cardb.sav`, `settings.json`, or `interface.ini`. The packaged game keeps them in `%LOCALAPPDATA%\Deception2` on Windows and in `$XDG_DATA_HOME/deception2`, or `~/.local/share/deception2`, on Linux. `DECEPTION2_DATA` overrides that folder and is not filled from the one above.
 
 On startup, a setting this version adds is written into the existing file. A value already there stays, including a name this version does not use. Display keys are added the same way in `interface.ini`, and the window layout in that file is left as it is.
 

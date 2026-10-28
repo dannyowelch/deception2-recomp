@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A static recompilation of **King's Field (NTSC-U, `SLUS-00158`)** — the North
-American release of the Japanese *King's Field II* (`SLPS-00069`) — using
-[RecompOne](https://github.com/BlackLabelHQ/RecompOne). The series was renumbered
-for the West: the US-boxed "King's Field II" (`SLUS-00255`) is a *different game*
-and every address here is wrong for it.
+A static recompilation of **Kagero: Deception II (NTSC-U, `SLUS-00677`)**,
+started from `dannyowelch/deception-recomp` (Tecmo's Deception, `SLUS-00340`).
+The launcher in `Deception2.Launcher/Program.cs` is the identity: app id
+`deception2`, updates from `dannyowelch/deception2-recomp`. The funcmaps and the
+addresses below are not this game's yet. Where this file names a serial, a
+repository, or `Deception.Launcher/`, the launcher record wins.
+
+The guide below still describes the King's Field port this tree descended from,
+including `SLUS-00158` and `config/kf2.json`.
 
 There is no decompilation, no ELF and no `.map`. Function boundaries come from a
 linear sweep and PSY-Q library functions are identified by hand, so most work in
@@ -219,7 +223,7 @@ what it is) live there, not here.
 | `ItemTurn` | a held item turned by hand: the one the pickup `func_8004831C` holds up (mouse look, the right stick, the gyro; the turn added at draw time in `ModelWalk.Ordinary`, the yaw on the record's and the tilt about the camera's right; the spin's step taken back on a pre at `Stage13.HookOrder.World`) and the menu's item preview (a left drag on the model, MenuMouse asking `Grab` first, the stick, the gyro; a pre/post on `func_8002156C`); the spin holds while turning and resumes 1.5 s after; Gameplay ▸ *Turn a held item*, the GYRO row with the bow's, `KF2_ITEMTURN`, `KF2_ITEMTURN_GYRO` | on (stick measured on both; mouse, drag and gyro not tried, not judged) | INPUT, "Turning a picked-up item", "Turning the item preview" |
 | `ItemEye` | a picked-up item held at the centre of the view: the pickup's targets moved by the camera's eye less the one `func_80046C64` assumes (the head bob, as Verdite3's), and at draw time the record moved for the submit so the middle of the mesh's box is on the view's axis at the game's distance, blended in over the fly-in and out over the fly-back | on (measured, not judged) | INPUT, "The item held up at the eye" |
 | `KeyLayout` | the port's WASD layout; the table and store here, the mechanism Verdite Core's `KeyLayoutApply` | on | INPUT, "The keyboard layout" |
-| `CardIcon`, `DesktopEntry` | the window and the executables wear `packaging/shared/deception.png` and `deception.ico`, made from `Icon.jpg`. `CardIcon.Install` is not called, so the disc's memory-card icon does not replace it. On Linux the AppImage carries the png under the app id, which is the only way a Wayland compositor can show one (`0061`) | shipped mark | PACKAGING, "The icon" |
+| `CardIcon`, `DesktopEntry` | the window and the executables wear `packaging/shared/deception2.png` and `deception2.ico`, made from `Icon.jpg`. `CardIcon.Install` is not called, so the disc's memory-card icon does not replace it. On Linux the AppImage carries the png under the app id, which is the only way a Wayland compositor can show one (`0061`) | shipped mark | PACKAGING, "The icon" |
 | `EndingHold`, `BootExe` | hold "The End", any button returns to the title | on | RUNTIME, "The ending screen" |
 | `HitGuard` | fences the final-boss hit-path fault | on | TODO, "The crash on the final boss's last hit" |
 | `WallGuard` | replaces the wall slide `func_80028080`: if the player already stands in map collision (bit `0x2`) its retries end in a loop with no call that never exits, and stage 3 calls it every tick, so the game froze; the guard tests the spot first and nudges the player to the nearest free one | on | GAME_INTERNALS, "The wall slide never leaves a wall it starts in" |
@@ -336,11 +340,11 @@ config/funcmaps/*.json   swept function maps (address/name/size; size is mandato
 patches/                 hand-written C# replacing recompiled functions
 mods/<id>/               runtime-loaded mods (mod.json + C#, Roslyn-compiled)
 mcp/                     stdio MCP server exposing the KF2_SHELL command channel as tools to MCP hosts
-Deception.Launcher/     the SHIPPED executable: Verdite Core's launcher under this
+Deception2.Launcher/    the SHIPPED executable: Verdite Core's launcher under this
                          port's names (one Program.cs and a csproj importing
                          tools/verdite-core/launcher/Launcher.targets); builds with
                          no disc, and makes the game at first run from the player's
-                         own image. Assembly DeceptionLauncher. See docs/PACKAGING.md
+                         own image. Assembly Deception2Launcher. See docs/PACKAGING.md
 packaging/               package.env (this port's names for Verdite Core's packaging),
                          the icons and desktop entry, and wrappers of the core scripts
 tools/RecompOne/patches/*.patch  the record of the port's changes to RecompOne
@@ -461,7 +465,7 @@ goes through `Psx/Parser.cs`, which strips the header itself.
 `generated/` and `patches/` are picked up by the SDK's default globs — adding an
 explicit `Compile Include` causes NETSDK1022. `tools/**` must stay explicitly
 removed, or the build compiles RecompOne's own sources and its `obj/`
-AssemblyInfo files (CS0579); `mods/**`, `mcp/**` and `Deception.Launcher/` are
+AssemblyInfo files (CS0579); `mods/**`, `mcp/**` and `Deception2.Launcher/` are
 removed for the same reason.
 
 ## The RecompOne checkout
@@ -524,12 +528,12 @@ The generated dispatch tables bake **absolute LBAs from one mastering**, so the
 build key includes each overlay file's LBA: a different mastering misses the
 cache and is rebuilt. A different serial is refused.
 
-- **`Deception.Launcher/` is the shipped executable and compiles neither
-  `generated/` nor `patches/`** — it carries Deception's inputs as payload under
+- **`Deception2.Launcher/` is the shipped executable and compiles neither
+  `generated/` nor `patches/`** — it carries the port's inputs as payload under
   `content/` and compiles them at first run. Its code is Verdite Core's
-  `launcher/`. `Deception.Launcher/Program.cs` is the one record of this port's
-  names, serial `SLUS-00340`, `Deception.json`, and
-  `dannyowelch/deception-recomp`. The launcher assembly is `DeceptionLauncher`
+  `launcher/`. `Deception2.Launcher/Program.cs` is the one record of this port's
+  names, serial `SLUS-00677`, `Deception.json`, and
+  `dannyowelch/deception2-recomp`. The launcher assembly is `Deception2Launcher`
   so it can load the game `Deception.dll`. CI asserts the payload on every push.
 - **The recompiled output and the port's sources compile in ONE Roslyn pass**
   (core's `GameCompile`). Its reference set comes from `TRUSTED_PLATFORM_ASSEMBLIES`, not
@@ -548,12 +552,13 @@ cache and is rebuilt. A different serial is refused.
   **Trimming is off and must stay off** (MonoMod detours, Roslyn, `AutoStart`'s
   reflection).
 - **QuickJit is off and must stay off, in both `Deception.csproj` and
-  `Deception.Launcher.csproj`** (the latter via `Launcher.targets`,
+  `Deception2.Launcher.csproj`** (the latter via `Launcher.targets`,
   `TieredCompilationQuickJit`). Tier-up recompiles a hooked method and MonoMod's
   detour does not reliably follow, so a committed hook stops firing for the
   session with `IsCommitted` still true. `DiscCheck.Validate` fills
-  `Runtime.DiscValidator` and refuses a disc that does not boot `SLUS_003.40`,
-  naming King's Field `SLUS-00158` and `SLUS-00255` when that is what was inserted.
+  `Runtime.DiscValidator` and refuses a disc that does not boot `SLUS_006.77`,
+  naming Tecmo's Deception `SLUS-00340`, the Kagero demo `SLUS-90041`, and
+  King's Field `SLUS-00158` and `SLUS-00255` when that is what was inserted.
 
 See `docs/PACKAGING.md`.
 

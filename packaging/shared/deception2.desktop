@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Deception II
+GenericName=Kagero: Deception II
+Comment=A PC port of Kagero: Deception II (SLUS-00677). Requires your own disc image.
+Exec=Deception2Launcher %f
+Icon=deception2
+Terminal=false
+Categories=Game;
+Keywords=deception;kagero;tecmo;playstation;

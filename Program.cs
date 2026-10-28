@@ -2,13 +2,13 @@ using RecompOne.Runtime;
 using RecompOne.Runtime.Memory;
 using Recompiled;
 
-// Entry point for the Tecmo's Deception (SLUS-00340) port.
+// Entry point for the Kagero: Deception II (SLUS-00677) port.
 // Before the runtime reads settings.json or the memory cards.
 // The window icon is the same picture embedded in the executable. Set before
 // the window exists so the first frame already wears it; when the launcher has
 // already opened the window, this still replaces whatever it set.
-Runtime.AppId = "deception";
-var iconPath = Path.Combine(AppContext.BaseDirectory, "deception.png");
+Runtime.AppId = "deception2";
+var iconPath = Path.Combine(AppContext.BaseDirectory, "deception2.png");
 if (File.Exists(iconPath))
     Runtime.SetIcon(File.ReadAllBytes(iconPath));
 
@@ -24,7 +24,7 @@ try
 }
 catch (Exception e)
 {
-    Console.Error.WriteLine($"[Deception] crashed: {e}");
+    Console.Error.WriteLine($"[Deception2] crashed: {e}");
     return 1;
 }
 return 0;

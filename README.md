@@ -1,6 +1,6 @@
-# Deception-recomp
+# deception2-recomp
 
-A PC port of Tecmo's Deception: Invitation to Darkness (`SLUS-00340`), built with [RecompOne](https://github.com/BlackLabelHQ/RecompOne).
+A PC port of Kagero: Deception II (`SLUS-00677`), built with [RecompOne](https://github.com/BlackLabelHQ/RecompOne). The tree was copied from [deception-recomp](https://github.com/dannyowelch/deception-recomp), the port of Tecmo's Deception (`SLUS-00340`).
 
 ## Features
 
@@ -18,11 +18,11 @@ A PC port of Tecmo's Deception: Invitation to Darkness (`SLUS-00340`), built wit
 
 ## Status
 
-Playable. A full playthrough is not yet verified.
+The launcher asks for `SLUS-00677` and refuses Tecmo's Deception, the Kagero demo (`SLUS-90041`), and both King's Field serials. The funcmaps, overlays and patch addresses are still Tecmo's Deception. A Kagero disc does not boot yet.
 
 ## Requirements
 
-Your own dump of the North American disc (`SLUS-00340`), as cue/bin or CHD v5, and the [.NET 10 SDK](https://dotnet.microsoft.com/download) - only needed to build. No game data, BIOS, or assets are included.
+Your own dump of the North American retail disc (`SLUS-00677`), as cue/bin or CHD v5, and the [.NET 10 SDK](https://dotnet.microsoft.com/download) - only needed to build. No game data, BIOS, or assets are included.
 
 ## Building and running
 
