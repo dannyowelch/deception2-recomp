@@ -1,4 +1,5 @@
 using RecompOne.Runtime.Cdrom;
+using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 
 namespace Deception;
@@ -17,6 +18,15 @@ public static class BootPlant
         var dat = fs.ReadFile("KOKU_DAT.BIN");
         Copy(m, dat, 0x99000, 0xAAC5C, 0x800F2800);
         Copy(m, dat, 0x40800, 0x13F7A, 0x801B2000);
+        // Members 0xAE (file index 3, koku3) and 0xA9 (file index 2, koku2) are
+        // linked at the same base as the player. Entry loads every overlay, and
+        // either one covers the player, so the player's map entries would be
+        // gone for the intro. Put the player back. The post-movie CdRead of
+        // index 3 loads koku3, and new game loads index 2, by LBA.
+        // See "New game loads directory index 2 over the player" in NOTES.md.
+        Dispatcher.Unload("koku3");
+        Dispatcher.Unload("koku2");
+        Dispatcher.Load("mdec");
         Console.WriteLine("[Boot] KOKU_DAT.BIN member 0x132 -> 0x800F2800, member 0x81 -> 0x801B2000");
     }
 

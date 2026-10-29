@@ -72,6 +72,26 @@
       "functions": [
         { "address": "801BE4DC" }
       ]
+    },
+    {
+      "name": "koku3",
+      "base": "0x800F2800",
+      "file": "KOKU_DAT.BIN",
+      "offset": 356352,
+      "size": 270232,
+      "linearSweep": true
+    },
+    {
+      "name": "koku2",
+      "base": "0x800F2800",
+      "file": "KOKU_DAT.BIN",
+      "offset": 346112,
+      "size": 8232,
+      "linearSweep": true,
+      "functions": [
+        { "address": "800F29B4" },
+        { "address": "800F2B58" }
+      ]
     }
   ]
 }
