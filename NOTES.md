@@ -231,6 +231,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - The vblank fired when the game asked
 - There were three fixed 60s, and only one of them is the host's
 - The intro movie ran at the render rate, because its pacer never armed
+- Deception II restarts the Tecmo logo at frame 15
 - The menu deadlock: input only moved when the game drew
 - The ending screen
 - Holding the frame is faithful, and it still reads as a crash

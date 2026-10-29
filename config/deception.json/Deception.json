@@ -1,132 +1,76 @@
 {
   "game": {
-    "id": "slus-00340",
-    "name": "Deception",
-    "output": "../generated"
+    "id": "slus-00677",
+    "name": "Deception2",
+    "output": "../../generated"
   },
-  "cue": "d:/CHDStudio/Input/Tecmo\u0027s Deception - Invitation to Darkness (USA).chd",
-  "funcMap": "funcmaps/main.json",
+  "cue": "../../disc/Kagero - Deception II (USA).chd",
   "linearSweep": true,
+  "pointerScan": true,
+  "functions": [
+    { "address": "800194B8" },
+    { "address": "800195E4" },
+    { "address": "800195F4" },
+    { "address": "80019604" },
+    { "address": "80019614" },
+    { "address": "80019624" },
+    { "address": "8001963C" },
+    { "address": "8001964C" },
+    { "address": "8001965C" },
+    { "address": "8001966C" },
+    { "address": "8001967C" },
+    { "address": "80019684" }
+  ],
   "patches": [
-    { "overlay": "main", "address": "0x8015B5C8",
+    { "overlay": "main", "address": "0x800B0770",
       "target": "RecompOne.Runtime.Sdk.LibEtc.VSync", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015FE30",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdSync", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015F03C",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
-    { "overlay": "main", "address": "0x80161DA0",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdRead", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015F300",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControl", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015F438",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControlF", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015F564",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControlB", "mode": "replace" },
-    { "overlay": "main", "address": "0x80161EA8",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdReadSync", "mode": "replace" },
-    { "overlay": "main", "address": "0x8015F00C",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetRing", "mode": "replace" },
-    { "overlay": "main", "address": "0x80162040",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StClearRing", "mode": "replace" },
-    { "overlay": "main", "address": "0x801620A0",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StUnSetRing", "mode": "replace" },
-    { "overlay": "main", "address": "0x801621E8",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StSetStream", "mode": "replace" },
-    { "overlay": "main", "address": "0x80162270",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StFreeRing", "mode": "replace" },
-    { "overlay": "main", "address": "0x8016236C",
-      "target": "RecompOne.Runtime.Sdk.LibCdStream.StGetNext", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80048FEC",
-      "target": "RecompOne.Runtime.Sdk.LibEtc.VSync", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80048E38",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdReadSync", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80046280",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControl", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x800463B8",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControlF", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x800464E4",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdControlB", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80046DB0",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdSync", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80048D30",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdRead", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80045FAC",
-      "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x80049240",
-      "target": "RecompOne.Runtime.Sdk.LibApi.DMACallback", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x8002B284",
+    { "overlay": "main", "address": "0x80093940",
       "target": "RecompOne.Runtime.Sdk.LibGpu.DrawSync", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x8002B85C",
-      "target": "RecompOne.Runtime.Sdk.LibGpu.PutDrawEnv", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x8002BA34",
-      "target": "RecompOne.Runtime.Sdk.LibGpu.PutDispEnv", "mode": "replace" },
-    { "overlay": "kokumei", "address": "0x8002B7E8",
-      "target": "RecompOne.Runtime.Sdk.LibGpu.DrawOTag", "mode": "replace" }
+    { "overlay": "main", "address": "0x80091480",
+      "target": "RecompOne.Runtime.Sdk.LibGpu.ClearImage", "mode": "replace" },
+    { "overlay": "main", "address": "0x800915A8",
+      "target": "RecompOne.Runtime.Sdk.LibGpu.LoadImage", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AC660",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AE048",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdInit", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AD45C",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdSync", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AD6DC",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdReady", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AE228",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdDataSync", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AE680",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdSearchFile", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AF5A0",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdRead", "mode": "replace" },
+    { "overlay": "main", "address": "0x800AF6A0",
+      "target": "RecompOne.Runtime.Sdk.LibCd.CdReadSync", "mode": "replace" }
   ],
   "overlays": [
     {
-      "name": "kokumei",
-      "funcMap": "funcmaps/kokumei.json",
-      "base": "0x80010000",
-      "file": "KOKUMEI.EXE",
-      "skip": 2048,
-      "functions": [
-        {
-          "address": "800288A4"
-        }
-      ]
-    },
-    {
-      "name": "bin_3dmd",
-      "funcMap": "funcmaps/bin_3dmd.json",
-      "base": "0x800B3578",
-      "file": "KOKUMEI/BIN/3DMD.BIN",
-      "linearSweep": true
-    },
-    {
-      "name": "enty",
-      "funcMap": "funcmaps/enty.json",
-      "base": "0x800B3578",
-      "file": "KOKUMEI/BIN/ENTY.BIN",
-      "linearSweep": true
-    },
-    {
-      "name": "open",
-      "funcMap": "funcmaps/open.json",
-      "base": "0x80024000",
-      "file": "KOKUMEI/BIN/OPEN.BIN",
-      "linearSweep": true
-    },
-    {
-      "name": "plan",
-      "funcMap": "funcmaps/plan.json",
-      "base": "0x800B3578",
-      "file": "KOKUMEI/BIN/PLAN.BIN",
+      "name": "mdec",
+      "base": "0x800F28B4",
+      "file": "KOKU_DAT.BIN",
+      "offset": 626868,
+      "size": 5488,
       "linearSweep": true,
-      "functions": [ { "address": "800E1258" } ]
-    },
-    {
-      "name": "staff",
-      "funcMap": "funcmaps/staff.json",
-      "base": "0x80120100",
-      "file": "STAFF.EXE",
-      "skip": 2048,
       "functions": [
-        {
-          "address": "8016CC18"
-        }
+        { "address": "800F28B4" },
+        { "address": "800F2CE8" },
+        { "address": "800F38F8" },
+        { "address": "800F3A78" }
       ]
     },
     {
-      "name": "title",
-      "funcMap": "funcmaps/title.json",
-      "base": "0x80120100",
-      "file": "TITLE.EXE",
-      "skip": 2048,
+      "name": "titleov",
+      "base": "0x801B2000",
+      "file": "KOKU_DAT.BIN",
+      "offset": 264192,
+      "size": 81786,
+      "linearSweep": true,
       "functions": [
-        {
-          "address": "801483A4"
-        }
+        { "address": "801BE4DC" }
       ]
     }
   ]

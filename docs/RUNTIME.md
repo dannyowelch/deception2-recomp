@@ -423,6 +423,27 @@ half of the lesson is where the movie's rate comes from at all — the disc, not
 loop — which is the same reason `patches/LoopPacing.cs` exists for loops the disc
 does *not* pace.
 
+## Deception II restarts the Tecmo logo at frame 15
+
+**Symptom:** `TECMO.STR` on `SLUS-00677` decoded frames 1–14, then frame 1 again.
+Frame 15 (MDEC input 9984 halfwords) never appeared. The decoder itself was
+finishing each frame it was given.
+
+**Mechanism:** `CdController.PumpMovie` (`AppId == "deception2"`) pulls one
+whole frame per poll. The guest ring is 32 slots and does not wrap on its own.
+A new frame that does not fit is error 9 when slot 0 is still live, or error 8
+when no end frame is latched. The pump treated that like an audio reject and
+replaced the sector. The next sector then failed the expected-index check, and
+the player seeked back to the start of the file. Measured at the reject: frame
+15, LBA 160707, error 9, producer 31, slot 0 status 4, DMA mode 0.
+
+**Fix:** on error 8 or 9 the sector stays held and the pump returns. The next
+poll retries it; the guest resets the data fifo itself. The same LBA was then
+accepted (error `0xA`) with the producer back at 1. An 18-second run decoded
+100 frames at depth 3 (38400 words) and then 168 at depth 2 (57600 words, the
+24-bit opening, presented as `rgb24`), every input consumed, no `MDEC_in_sync`.
+The continued picture has not been judged by eye.
+
 ## The menu deadlock: input only moved when the game drew
 
 **Symptom:** press the button that opens the in-game menu and everything stops —
