@@ -25,6 +25,11 @@ public sealed class CdController
     private bool _sectorHeld;
     private bool _inGuestService;
     private int _pumpLog;
+    private int _xaDecoded;
+    private int _xaSkipLog;
+    private bool _xaLogged;
+    private int _setlocLog;
+    private int _waitLog;
 
     /// <summary>True while the movie pump is inside the guest CD service.
     /// A poll from that service must not start another sector.</summary>
@@ -265,7 +270,11 @@ public sealed class CdController
             case 0x02: //Setloc
                 if (prms.Count >= 3)
                     _seekLba = BcdToLba(prms[0], prms[1], prms[2]);
-                QueueIrq(3, [DriveStatus()]);
+                // The overlay loader reads through LibCd, which keeps its own
+                // position. The guest Setloc only moves this controller.
+                if (Runtime.AppId == "deception2")
+                    Sdk.LibCd.SeekTo(_seekLba);
+                DeliverBlocking(0x02, 3, [DriveStatus()]);
                 break;
             case 0x03: // cd-da play (not sure if it goes used in games?)
                 _reading = false;
@@ -300,6 +309,8 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                ReleaseStreamForCommand();
+                EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -307,6 +318,8 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                ReleaseStreamForCommand();
+                EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -315,6 +328,8 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                ReleaseStreamForCommand();
+                EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -341,10 +356,10 @@ public sealed class CdController
                 QueueIrq(3, [DriveStatus(), _mode, 0x00, _filterFile, _filterChannel]);
                 break;
             case 0x10: // Getloc L
-                QueueIrq(3, GetlocL());
+                DeliverBlocking(0x10, 3, GetlocL());
                 break;
             case 0x11: // Getloc P
-                QueueIrq(3, GetlocP());
+                DeliverBlocking(0x11, 3, GetlocP());
                 break;
             case 0x13: // GetTN
                 QueueIrq(3, [DriveStatus(), IntToBcd(_fs.FirstTrack), IntToBcd(_fs.LastTrack)]);
@@ -531,7 +546,10 @@ public sealed class CdController
                 if ((err == 8u || err == 9u) && _sectorHeld)
                     break;
                 // The guest left the sector in the fifo (an audio reject, or
-                // a header only). Drop the hold so the next sector replaces it.
+                // a header only). An STR audio sector is XA in the 2336-byte
+                // form; the 2048-byte fifo has already lost the subheader.
+                // Decode it, then drop the hold so the next sector replaces it.
+                if (!video && _sectorHeld) TakeStrAudio();
                 if (_sectorHeld) _sectorHeld = false;
             }
             finally
@@ -565,6 +583,7 @@ public sealed class CdController
         _irqFlags = irqType;
         _lastIrq = irqType;
         SetInInterrupt(1);
+        NoteGuestIrq(irqType);
     }
 
     private void DeliverNext()
@@ -575,6 +594,150 @@ public sealed class CdController
         _irqFlags = irqType;
         _lastIrq = irqType;
         SetInInterrupt(1);
+        NoteGuestIrq(irqType);
+    }
+
+    /// <summary>
+    /// PSY-Q's blocking CdControl waits on the halfword at 0x800D194E, which
+    /// the kernel sets while it services the CD interrupt. Nothing here raises
+    /// that interrupt, and the recompiled image only clears the word, so the
+    /// overlay loader's Setloc spins until the window stops answering.
+    /// Data-ready is the movie's own service; waking the wait on it would
+    /// hand the stream a command result.
+    /// </summary>
+    private void NoteGuestIrq(byte irqType)
+    {
+        if (Runtime.AppId != "deception2") return;
+        if (irqType == 1)
+            _m.WriteU16(0x800D194Eu, 0);
+        else if (irqType == 2 || irqType == 3 || irqType == 5)
+            _m.WriteU16(0x800D194Eu, 1);
+    }
+
+    /// <summary>
+    /// A blocking CdControl waits on the halfword at 0x800D194E and only
+    /// then runs the handler that writes the sync byte. After the movie
+    /// that halfword is clear while a data-ready or a command interrupt is
+    /// still latched, so the new acknowledge stays queued, the sync byte
+    /// stays NoIntr, and PSY-Q times the wait out. Drop the latch and
+    /// deliver this command. A read is left alone: its data-ready is the
+    /// movie's next sector.
+    /// </summary>
+    private void DeliverBlocking(byte cmd, byte irqType, byte[] response)
+    {
+        if (Runtime.AppId != "deception2")
+        {
+            QueueIrq(irqType, response);
+            return;
+        }
+
+        var wasReading = _reading;
+        _reading = false;
+        _streamPending = false;
+        _sectorHeld = false;
+        _dataReady = false;
+        ReleaseStreamForCommand();
+        var half = _m.ReadU16(0x800D194Eu);
+        if (half == 0 && (_irqFlags != 0 || _pendingIrqs.Count > 0))
+        {
+            _irqFlags = 0;
+            _responseFifo.Clear();
+            ClearInInterrupt();
+            _pendingIrqs.Clear();
+        }
+
+        if (_waitLog < 24 && (half == 0 || wasReading || _irqFlags != 0))
+        {
+            _waitLog++;
+            Console.WriteLine(
+                $"[CD] {CmdName(cmd)} wait irq={_irqFlags} pending={_pendingIrqs.Count} half={half} reading={wasReading}");
+        }
+
+        if (cmd == 0x02 && _setlocLog < 8)
+        {
+            _setlocLog++;
+            Console.WriteLine($"[CD] setloc lba={_seekLba} irq={_irqFlags} pending={_pendingIrqs.Count}");
+        }
+
+        QueueIrq(irqType, response);
+    }
+
+    /// <summary>
+    /// Pause, Stop, Setloc and Init end a ReadS. A live data-ready would
+    /// stay in front of the new command's acknowledge, and QueueIrq would
+    /// only enqueue it. Drop that data-ready so the acknowledge is delivered
+    /// and the guest wait can run.
+    /// </summary>
+    private void ReleaseStreamForCommand()
+    {
+        if (Runtime.AppId != "deception2") return;
+        if (_irqFlags == 1)
+        {
+            _irqFlags = 0;
+            _responseFifo.Clear();
+            ClearInInterrupt();
+        }
+
+        _sectorHeld = false;
+        _dataReady = false;
+        while (_pendingIrqs.Count > 0 && _pendingIrqs.Peek().irqType == 1)
+            _pendingIrqs.Dequeue();
+        if (_irqFlags == 0 && _pendingIrqs.Count > 0)
+            DeliverNext();
+    }
+
+    private void TakeStrAudio()
+    {
+        if (Runtime.AppId != "deception2") return;
+        byte[] sec;
+        try
+        {
+            sec = _fs.ReadSectorData(_lastReadLba, 2336);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (sec.Length < 8 || (sec[2] & 0x04) == 0)
+        {
+            if (_xaSkipLog++ == 0)
+            {
+                var n = Math.Min(8, sec.Length);
+                var hex = n > 0 ? BitConverter.ToString(sec, 0, n) : "empty";
+                Console.WriteLine($"[STR] xa not audio {hex} mode={_mode:X2} lba={_lastReadLba}");
+            }
+
+            return;
+        }
+
+        // Mode bit 3 is the XA filter. A sector outside it is silent on hardware.
+        if ((_mode & 0x08) != 0 && (sec[0] != _filterFile || sec[1] != _filterChannel))
+        {
+            if (_xaSkipLog++ < 3)
+                Console.WriteLine(
+                    $"[STR] xa filtered file={sec[0]:X2} ch={sec[1]:X2} want={_filterFile:X2}/{_filterChannel:X2} mode={_mode:X2}");
+            return;
+        }
+
+        Assets.Xa.XaRouter.Sector(_lastReadLba, sec, true);
+        _xaDecoded++;
+        if (_xaLogged) return;
+        _xaLogged = true;
+        var volL = _m.ReadU16(0x1F801DB0u);
+        var volR = _m.ReadU16(0x1F801DB2u);
+        Console.WriteLine(
+            $"[STR] xa file={sec[0]:X2} ch={sec[1]:X2} sub={sec[2]:X2} coding={sec[3]:X2} mode={_mode:X2} filter={_filterFile:X2}/{_filterChannel:X2} cdvol={volL:X4}/{volR:X4} buffered={XaAudio.BufferedSamples}");
+    }
+
+    private void EndStrAudio()
+    {
+        if (Runtime.AppId != "deception2") return;
+        if (_xaDecoded > 0)
+            Console.WriteLine($"[STR] xa end decoded={_xaDecoded} buffered={XaAudio.BufferedSamples}");
+        XaAudio.Reset();
+        _xaDecoded = 0;
+        _xaLogged = false;
     }
 
     private byte ReadDataByte()
