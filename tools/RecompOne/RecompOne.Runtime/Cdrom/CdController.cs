@@ -28,6 +28,10 @@ public sealed class CdController
     private int _xaDecoded;
     private int _xaSkipLog;
     private bool _xaLogged;
+    private bool _xaFeed;
+    private double _xaCredit;
+    private long _xaFeedTick;
+    private int _xaFeedLog;
     private int _setlocLog;
     private int _waitLog;
 
@@ -288,6 +292,7 @@ public sealed class CdController
                 QueueIrq(3, [DriveStatus()]);
                 break;
             case 0x06: // ReadN
+                _xaFeed = false;
                 if (IsAudioRegion(_seekLba) && (_mode & 0x01) == 0) //h40 if not da mode
                 {
                     _reading = false;
@@ -309,6 +314,7 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                _xaFeed = false;
                 ReleaseStreamForCommand();
                 EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
@@ -318,6 +324,7 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                _xaFeed = false;
                 ReleaseStreamForCommand();
                 EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
@@ -328,6 +335,7 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                _xaFeed = false;
                 ReleaseStreamForCommand();
                 EndStrAudio();
                 QueueIrq(3, [DriveStatus()]);
@@ -356,10 +364,12 @@ public sealed class CdController
                 QueueIrq(3, [DriveStatus(), _mode, 0x00, _filterFile, _filterChannel]);
                 break;
             case 0x10: // Getloc L
-                DeliverBlocking(0x10, 3, GetlocL());
+                // The music player polls this for the whole of a ReadS. Ending
+                // the read here stops the feed on the first position check.
+                DeliverBlocking(0x10, 3, GetlocL(), endRead: !_xaFeed);
                 break;
             case 0x11: // Getloc P
-                DeliverBlocking(0x11, 3, GetlocP());
+                DeliverBlocking(0x11, 3, GetlocP(), endRead: !_xaFeed);
                 break;
             case 0x13: // GetTN
                 QueueIrq(3, [DriveStatus(), IntToBcd(_fs.FirstTrack), IntToBcd(_fs.LastTrack)]);
@@ -416,6 +426,22 @@ public sealed class CdController
 
                 _reading = true;
                 _playing = false;
+                // Mode 0xC8 is what KOKU2XA playback sets: XA-ADPCM, the
+                // filter, and double speed. Those sectors are file 1,
+                // channels 0-7, submode 0x64, coding 0x01. Hardware sends a
+                // filter match to the SPU and does not raise data-ready.
+                // Raising it here stalls the player's GetlocL behind an
+                // interrupt it never reads, and the STR callback leaves the
+                // fifo alone, so TakeStrAudio never runs. The movie's mode
+                // is 0xC0 (filter off); that path stays on PumpMovie.
+                if (XaFilterRead)
+                {
+                    BeginXaFeed();
+                    QueueIrq(3, [DriveStatus()]);
+                    break;
+                }
+
+                _xaFeed = false;
                 ReadNextSector();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(1, [DriveStatus()]);
@@ -485,6 +511,11 @@ public sealed class CdController
     public void PumpMovie(CpuContext cpu, IMemory mem)
     {
         if (Runtime.AppId != "deception2" || _inGuestService) return;
+        if (_xaFeed)
+        {
+            FeedXa();
+            return;
+        }
         // A frame is at most 7 video sectors, plus one audio sector inside
         // it and one sitting in front of it. 16 covers that and a retry
         // when the frame gate still holds the next read.
@@ -621,9 +652,10 @@ public sealed class CdController
     /// still latched, so the new acknowledge stays queued, the sync byte
     /// stays NoIntr, and PSY-Q times the wait out. Drop the latch and
     /// deliver this command. A read is left alone: its data-ready is the
-    /// movie's next sector.
+    /// movie's next sector. Getloc during an XA feed passes endRead false,
+    /// so the position poll does not stop the stream.
     /// </summary>
-    private void DeliverBlocking(byte cmd, byte irqType, byte[] response)
+    private void DeliverBlocking(byte cmd, byte irqType, byte[] response, bool endRead = true)
     {
         if (Runtime.AppId != "deception2")
         {
@@ -632,10 +664,19 @@ public sealed class CdController
         }
 
         var wasReading = _reading;
-        _reading = false;
-        _streamPending = false;
-        _sectorHeld = false;
-        _dataReady = false;
+        if (endRead)
+        {
+            _reading = false;
+            _streamPending = false;
+            _sectorHeld = false;
+            _dataReady = false;
+            if (_xaFeed)
+            {
+                _xaFeed = false;
+                EndStrAudio();
+            }
+        }
+
         ReleaseStreamForCommand();
         var half = _m.ReadU16(0x800D194Eu);
         if (half == 0 && (_irqFlags != 0 || _pendingIrqs.Count > 0))
@@ -684,6 +725,87 @@ public sealed class CdController
             _pendingIrqs.Dequeue();
         if (_irqFlags == 0 && _pendingIrqs.Count > 0)
             DeliverNext();
+    }
+
+    /// <summary>
+    /// True when this game's ReadS is an XA stream with the filter on.
+    /// KOKU2XA uses mode 0xC8. The intro's mode is 0xC0, so its sectors
+    /// stay on the movie pump.
+    /// </summary>
+    private bool XaFilterRead =>
+        Runtime.AppId == "deception2" && (_mode & 0x48) == 0x48;
+
+    private void BeginXaFeed()
+    {
+        _xaFeed = true;
+        _xaFeedTick = Environment.TickCount64;
+        // One 8-channel interleave, so the selected channel is decoded on
+        // the poll inside this command instead of after a stale GetlocL.
+        _xaCredit = 8;
+        _streamPending = false;
+        _lastReadLba = _seekLba;
+        if (_xaFeedLog >= 4) return;
+        _xaFeedLog++;
+        Console.WriteLine(
+            $"[XA] feed start lba={_seekLba} mode={_mode:X2} filter={_filterFile:X2}/{_filterChannel:X2}");
+    }
+
+    /// <summary>
+    /// KOKU2XA0 and KOKU2XA1 are eight stereo 37800 Hz channels, one channel
+    /// per sector, submode 0x64. Double speed is 150 sectors/s, so one
+    /// channel is 18.75 sectors/s and 37800 samples/s. Padding sectors
+    /// (KOKU2XA5) have submode 0 and are skipped. A data-ready is never
+    /// raised: the player only polls GetlocL.
+    /// </summary>
+    private void FeedXa()
+    {
+        if (!_xaFeed || !_reading) return;
+        var now = Environment.TickCount64;
+        var rate = (_mode & 0x80) != 0 ? 150.0 : 75.0;
+        _xaCredit += (now - _xaFeedTick) * rate / 1000.0;
+        _xaFeedTick = now;
+        if (_xaCredit > 16) _xaCredit = 16;
+
+        var scanned = 0;
+        while (_xaCredit >= 1.0 && scanned < 32 && _reading)
+        {
+            if (_seekLba < 0 || _seekLba >= _fs.DataSectors)
+            {
+                _reading = false;
+                _xaFeed = false;
+                Console.WriteLine($"[XA] feed end lba={_seekLba} decoded={_xaDecoded}");
+                break;
+            }
+
+            byte[] sec;
+            try
+            {
+                sec = _fs.ReadSectorData(_seekLba, 2336);
+            }
+            catch
+            {
+                break;
+            }
+
+            _xaCredit -= 1.0;
+            scanned++;
+            var lba = _seekLba;
+            _lastReadLba = lba;
+            _seekLba++;
+            _sectorsRead++;
+
+            if (sec.Length < 8 || (sec[2] & 0x04) == 0) continue;
+            if (sec[0] != _filterFile || sec[1] != _filterChannel) continue;
+
+            Assets.Xa.XaRouter.Sector(lba, sec, false);
+            _xaDecoded++;
+            if (_xaLogged) continue;
+            _xaLogged = true;
+            var volL = _m.ReadU16(0x1F801DB0u);
+            var volR = _m.ReadU16(0x1F801DB2u);
+            Console.WriteLine(
+                $"[XA] file={sec[0]:X2} ch={sec[1]:X2} sub={sec[2]:X2} coding={sec[3]:X2} lba={lba} cdvol={volL:X4}/{volR:X4} buffered={XaAudio.BufferedSamples}");
+        }
     }
 
     private void TakeStrAudio()
