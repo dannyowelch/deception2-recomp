@@ -248,6 +248,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - Minimising froze the game on Wayland
 - A BIOS thread drew without a GL context
 - The window thread was blocked for the whole intro
+- The gameplay frame is three vblanks
 - Deception II reads a pad buffer nothing fills
 - The pad's two button bytes were reversed
 - Two general shapes worth keeping

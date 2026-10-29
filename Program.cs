@@ -16,6 +16,7 @@ if (File.Exists(iconPath))
 Deception.LegacyData.Migrate();
 Deception.GraphicsOptions.Install();
 Deception.PrimHeap.Install();
+Deception.FrameRate.Install();
 // The live Entry predates the call EntryWriter emits. Install is idempotent
 // and attaches on the overlay load, which is after the symbols exist.
 Deception.InputSupport.Install();

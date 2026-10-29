@@ -1398,6 +1398,28 @@ thread that holds the context.
 the window dispatching. If `TECMO.STR` still reopens at LBA 160637 after this,
 the status-2 writer is the next place to look, not this pump.
 
+## The gameplay frame is three vblanks
+
+**Symptom:** the intro, the cutscenes and the menus hold a steady 30 pictures a second. Gameplay holds a steady 20. Traps, the player and enemies step once per picture, so the same wait is the speed of the game. On a PC the frame's own work finishes well inside one vblank, and the rate does not move when the room gets heavier.
+
+**Mechanism:** `func_80014180` ends every pass in `func_8001441C`. That function loads the byte at `0x800DB4C4`. Zero passes `VSync(3)`. Anything else passes `VSync(2)`. The return address after the call is `0x80014444`, and the return value is ignored. The linked `VSync` at `0x800B0770` waits that many NTSC vblanks: mode 0 waits one (the saved threshold is already met, then it waits for `vcount + 1`), mode 2 waits two, mode 3 waits three. Mode 1 returns without waiting. The HLE in `LibEtc.VSync` uses the same counts for 0, 2 and 3, and presents once per waiting call. Sixty vblanks a second divided by three is 20, and divided by two is 30. **Confirmed** from the boot executable and from the HLE. The byte is a state id (0, 5, 10, 254, 255), not a divisor stored on its own. Writers at `0x800199CC`, `0x80019A8C`, `0x8001AD94`, `0x8001B00C` and `0x8001BD54` store 254. Nobody stores 0 with an immediate; gameplay is the value the BSS still has.
+
+On a console the same call is a ceiling. A frame that already burned three vblanks returns from the first wait and then takes one more, so a busy room runs slower than 20. It cannot run faster. The PC hits the ceiling on every frame.
+
+`VSync(0)` at `0x8003C110` and `0x800763A4`, the boot load's `VSync(3)` at `0x80014D68`, and the `VSync(-1)` polls in the movie state are different callers. The STR player is another one, described with the fix below.
+
+**Fix:** `FrameRate` attaches a pre on `func_800B0770`. When `RA` is `0x80014444` and `A0` is 3, it stores 2 before `LibEtc.VSync` reads it. Mode 2 is left as 2. The frame function then runs once every two vblanks: 30 pictures a second, and 30 steps a second of everything that function steps. Menus and the in-engine states already asked for 30, so they stay there. Gameplay moves from the disc's 20 to 30, one and a half times the step. A 60 Hz display scans each of those pictures twice; the port does not draw a second one. `KF2_FRAMECAP=native` does not attach the pre. `KF2_FRAMECAP_PROBE=1` prints the calls once a second.
+
+An earlier build stored 0 instead, one vblank, 60 steps a second. That is three times gameplay and twice the menus. Played against an emulator it was too fast, so the wait went back to two vblanks.
+
+The vblank grid stays at 60 Hz, so a clock that counts vblanks (the music sequencer among them) does not pick up the extra pictures.
+
+The movie player is not this call. `func_8001A700` plays `\TECMO.STR;1` with argument 2 (120 frames, four or five sectors a frame) and, when that returns 0, `\OPENING.STR;1` with argument 4 (1800 frames, eight or nine sectors a frame). The player stores the argument at `0x8018D44C` and waits with it after each frame (`0x800F2B24`). Two vblanks is 30 pictures a second. Four is 15, and 150 sectors a second cannot feed a nine-sector frame any faster than that, so the opening cinematic is 15 on the disc as well. A button during the logo sets the halfword at `0x800E5EDC`, the logo returns 1, and the opening is skipped. The frame hook does not rewrite the movie's argument. STR delivery stays on the disc clock in `CdController`.
+
+**Measurement:** `KF2_FRAMECAP_PROBE=1` on the one-vblank build, through the opening. The movie player does not enter `func_8001441C`, so that probe's frame count stayed at 0 for the length of the STR (one window of 125.5 s). Once that returned, mode byte 254 (the title) asked for `VSync(2)` and the hook ran it at 60 a second, steady across ten windows (`60/s`, `disc asked 2 x60`). A later state, mode byte 10, climbed back to `61/s` after a CD gap at 1–5 a second. Gameplay, mode byte 0 asking for `VSync(3)`, was not reached. That speed was then played and judged too fast.
+
+On the two-vblank build the same probe, 28 s from boot: the Tecmo logo asked for 2 and ran at 30 a second (`movie 30/s asked 2 x30` across three windows). `OPENING.STR` then asked for 4 and held 15 a second (`movie 15/s asked 4 x15`, steady for the rest of the run). The frame function had not been entered, so the title and gameplay were not in this window. A state that asks for 2 is the disc's own wait, which this hook no longer rewrites; gameplay's 3 is rewritten to that same 2. Played afterwards, gameplay at this 30 was judged to feel right. Menus, cutscenes and the opening were not judged in that pass.
+
 ## Deception II reads a pad buffer nothing fills
 
 **Symptom:** a controller does nothing. The keyboard does nothing during the

@@ -65,6 +65,9 @@
         <Content Include="$(VerditeGameRoot)PrimHeap.cs"
                  Link="content/src/PrimHeap.cs"
                  CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)FrameRate.cs"
+                 Link="content/src/FrameRate.cs"
+                 CopyToOutputDirectory="PreserveNewest" />
         <Content Include="$(VerditeGameRoot)border\*.jpg"
                  LinkBase="content/border"
                  CopyToOutputDirectory="PreserveNewest" />
