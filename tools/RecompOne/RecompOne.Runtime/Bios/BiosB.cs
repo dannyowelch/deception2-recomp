@@ -542,7 +542,14 @@ public static class BiosB
             case 0x59: c.V0 = BiosA.TestDevice(m, c.A0); break;
             case 0x5B: c.V0 = 0u; break;
             case 0x5C: c.V0 = 1u; break;
-            case 0x5D: c.V0 = 1u; break;
+            case 0x5D:
+                // _card_wait. The command already queued its completion; the
+                // caller tests the event as soon as this returns. The vblank
+                // pump would still be on the same frame and would drop it, so
+                // the wait delivers that one event itself.
+                PumpCardEvents(c, m, true);
+                c.V0 = 1u;
+                break;
             case CapturedStartPad:
                 _padCardStarted = true;
                 c.V0 = 1u;

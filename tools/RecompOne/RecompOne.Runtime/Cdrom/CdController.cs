@@ -1,4 +1,5 @@
 using RecompOne.Runtime.Bios;
+using RecompOne.Runtime.Context;
 using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 
@@ -21,6 +22,13 @@ public sealed class CdController
     private bool _dataReady;
     private bool _reading;
     private bool _streamPending;
+    private bool _sectorHeld;
+    private bool _inGuestService;
+    private int _pumpLog;
+
+    /// <summary>True while the movie pump is inside the guest CD service.
+    /// A poll from that service must not start another sector.</summary>
+    internal bool InGuestService => _inGuestService;
     private byte _lastIrq;
 
     private byte _mode;
@@ -433,9 +441,121 @@ public sealed class CdController
     {
         if (!_reading || !_streamPending) return;
         if (_irqFlags != 0 || _pendingIrqs.Count > 0) return;
+        // The guest service is still reading the sector it was handed.
+        if (_inGuestService) return;
+        // A sector the guest has not finished reading still sits in the fifo.
+        // Replacing it here drops the body the movie is about to DMA.
+        if (_sectorHeld) return;
+        // The movie player raises this gate before the last sector's body DMA
+        // and drops any data-ready that arrives before the DMA callback clears
+        // it. Delivering the next sector in that window loses it. Hold the
+        // sector; the callback runs from the interrupt drain before the next
+        // attempt, and the gate is clear by then. This word is this game's.
+        if (Runtime.AppId == "deception2" && Runtime.Mem != null
+            && Runtime.Mem.ReadU32(0x800EED5Cu) == 1u)
+            return;
         _streamPending = false;
         ReadNextSector();
         DeliverImmediate(1, [DriveStatus()]);
+    }
+
+    /// <summary>
+    /// This game's STR callback is not on the BIOS IRQ path. After ReadS
+    /// returns, a data-ready sits in the controller until something calls
+    /// the guest service at 0x800AE588. One call takes one sector. A frame
+    /// is several video sectors with XA audio between them, and the decoder
+    /// runs as soon as the first sector is marked done, so the rest of that
+    /// frame is pulled here before the poll returns to the guest.
+    /// </summary>
+    public void PumpMovie(CpuContext cpu, IMemory mem)
+    {
+        if (Runtime.AppId != "deception2" || _inGuestService) return;
+        // A frame is at most 7 video sectors, plus one audio sector inside
+        // it and one sitting in front of it. 16 covers that and a retry
+        // when the frame gate still holds the next read.
+        var refused = 0;
+        for (var n = 0; n < 16; n++)
+        {
+            // A command-complete or error still belongs to the guest command
+            // wait. That wait stores its result from the interrupt, and
+            // taking the interrupt first leaves the result clear.
+            if (_irqFlags != 1)
+            {
+                if (_irqFlags != 0) break;
+                if (_sectorHeld)
+                {
+                    // The ring or the frame gate sent this sector back
+                    // without reading it, and the interrupt is already
+                    // acknowledged. Hand the same sector over again.
+                    DeliverImmediate(1, [DriveStatus()]);
+                }
+                else
+                {
+                    var before = _sectorsRead;
+                    AdvanceStreaming();
+                    if (_irqFlags != 1 || _sectorsRead == before) break;
+                }
+            }
+
+            // Audio sectors are interleaved in the file. Their bytes are not
+            // a chunk index; the old stop treated 03-0C as sector 3 of 3 and
+            // 11-11 as sector 17 of 1, so the rest of the frame never
+            // arrived and DecDCTin sat in MDEC_in_sync.
+            var video = IsStrVideo(_dataBuf);
+            var sec = video ? _dataBuf[4] : (byte)0;
+            var nsec = video ? _dataBuf[6] : (byte)0;
+            var fifo = _dataFifoPos;
+            _inGuestService = true;
+            try
+            {
+                Dispatcher.Call(cpu, mem, 0x800AE588u);
+                // The body completion has to mark this slot before the next
+                // sector advances the producer. That callback also drops the
+                // frame gate, which is what refused the read below.
+                Interrupts.FlushPending(cpu, mem);
+                if (_sectorHeld && _dataFifoPos == fifo)
+                {
+                    if (++refused >= 2) break;
+                    continue;
+                }
+
+                refused = 0;
+                // The 32-slot ring fills faster than the player frees it,
+                // because a poll pulls a whole frame and the disc does not.
+                // A frame that does not fit is error 9 (slot 0 still live)
+                // or error 8 (no end-frame latch). The guest has read the
+                // header and left the body. Replacing the sector here is
+                // what made TECMO.STR restart at frame 15. Keep it. The
+                // retry resets the fifo itself.
+                var err = mem.ReadU32(0x800D18CCu);
+                if ((err == 8u || err == 9u) && _sectorHeld)
+                    break;
+                // The guest left the sector in the fifo (an audio reject, or
+                // a header only). Drop the hold so the next sector replaces it.
+                if (_sectorHeld) _sectorHeld = false;
+            }
+            finally
+            {
+                _inGuestService = false;
+            }
+
+            if (_pumpLog < 24)
+            {
+                _pumpLog++;
+                var kind = video ? $"sec={sec}/{nsec}" : "audio";
+                Console.WriteLine($"[STR] pump {kind} lba={_lastReadLba}");
+            }
+
+            if (video && nsec != 0 && sec + 1 >= nsec) break;
+        }
+    }
+
+    /// <summary>STR video sectors start with id 0x0160, type 0x8001.</summary>
+    private static bool IsStrVideo(byte[] buf)
+    {
+        return buf.Length >= 8
+            && buf[0] == 0x60 && buf[1] == 0x01
+            && buf[2] == 0x01 && buf[3] == 0x80;
     }
 
     private void DeliverImmediate(byte irqType, byte[] response)
@@ -466,15 +586,45 @@ public sealed class CdController
         }
 
         var b = _dataBuf[_dataFifoPos++];
-        if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
+        if (_dataFifoPos >= _dataBuf.Length)
+        {
+            _dataReady = false;
+            _sectorHeld = false;
+        }
         return b;
+    }
+
+    public static int StreamProbeLeft = 16;
+    private static int _errProbeLeft = 8;
+
+    internal static void NoteStreamError(PSMemory mem)
+    {
+        if (_errProbeLeft-- <= 0) return;
+        var slot = mem.ReadU32(0x800F11D8u);
+        var id = slot != 0 ? mem.ReadU16(slot) : (ushort)0;
+        var type = slot != 0 ? mem.ReadU16(slot + 2) : (ushort)0;
+        var ch = mem.ReadU32(0x800EED58u);
+        var gate = mem.ReadU32(0x800EED78u);
+        Console.WriteLine($"[STR] err5 slot=0x{slot:X8} id=0x{id:X4} type=0x{type:X4} expectCh={ch} gate={gate}");
     }
 
     public void DmaReadData(IMemory m, uint addr, uint byteCount)
     {
+        if (StreamProbeLeft > 0 && byteCount <= 32)
+        {
+            StreamProbeLeft--;
+            var n = Math.Min(8, _dataBuf.Length - _dataFifoPos);
+            var hex = n > 0 ? BitConverter.ToString(_dataBuf, _dataFifoPos, n) : "empty";
+            Console.WriteLine($"[STR] dma dst=0x{addr:X8} bytes={byteCount} fifo={_dataFifoPos}/{_dataBuf.Length} {hex} lba={_lastReadLba}");
+        }
+
         for (uint i = 0; i < byteCount; i++)
             m.WriteU8(addr + i, _dataFifoPos < _dataBuf.Length ? _dataBuf[_dataFifoPos++] : (byte)0);
-        if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
+        if (_dataFifoPos >= _dataBuf.Length)
+        {
+            _dataReady = false;
+            _sectorHeld = false;
+        }
     }
 
     public void LoadSectorToFifo(byte[] data)
@@ -505,6 +655,7 @@ public sealed class CdController
             _lastReadLba = _seekLba;
             _sectorsRead++;
             _seekLba++;
+            _sectorHeld = true;
         }
         catch
         {

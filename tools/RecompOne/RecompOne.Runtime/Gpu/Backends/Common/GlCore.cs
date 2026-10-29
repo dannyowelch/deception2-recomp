@@ -2611,6 +2611,10 @@ public sealed partial class GlCore : IGpuBackend
         // Only the non-rgb24 path searches for a target, so src is meaningful only
         // there; an rgb24 present (FMV) draws raw VRAM by a different route and would
         // otherwise be miscounted as the 4:3 margin fallback the census is watching for.
+        // FMV is displayed 24-bit. Counting it as the 4:3 fallback would lie about
+        // the census, but a silent probe during the intro is a failed boot.
+        if (GpuHle.PresentProbe && rgb24 && (GpuHle.PresentRgb24++ % 15) == 0)
+            Console.WriteLine($"[present] rgb24 display {w}x{h} frame {_frame}");
         if (GpuHle.PresentProbe && !rgb24)
         {
             if (src is { Margin: > 0 }) GpuHle.PresentWide++;

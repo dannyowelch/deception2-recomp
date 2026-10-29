@@ -35,6 +35,16 @@ public static class EntryWriter
         entry.AppendLine("        RecompOne.Runtime.Modding.ModLoader.LoadAll();");
         entry.AppendLine($"        cd.LoadToMemory(\"{bootExe}\", 0x{exe.Destination:X8}u, 0x800, {exe.TextSize});");
         entry.AppendLine("        Dispatcher.Load(\"main\");");
+        // Kagero links two KOKU_DAT.BIN members past the boot image and calls them
+        // by those addresses. Register alone does not put them in the map, and the
+        // boot executable never copies the bytes. Plant both before the guest runs;
+        // crt0's BSS clear stops at 0x800F2800, so these ranges survive it.
+        if (className == "Deception2")
+        {
+            foreach (var name in overlays)
+                entry.AppendLine($"        Dispatcher.Load(\"{name}\");");
+            entry.AppendLine("        Deception.BootPlant.Apply(fs, m);");
+        }
         entry.AppendLine("        var c = new CpuContext();");
         entry.AppendLine($"        c.GP = 0x{exe.InitialGP:X8}u;");
         var initialSp = exe.InitialSP != 0 ? exe.InitialSP + exe.SpOffset : sysCfg.Stack;

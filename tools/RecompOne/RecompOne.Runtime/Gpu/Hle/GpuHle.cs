@@ -20,7 +20,7 @@ public static class GpuHle
     // KF2_PRESENT_PROBE=2: also name the verdict, and every live target, the frame
     // the verdict changes. GlCore.PresentDisplay prints.
     public static bool PresentVerdictProbe;
-    public static long PresentWide, PresentPlain, PresentFallback;
+    public static long PresentWide, PresentPlain, PresentFallback, PresentRgb24;
     public static double PresentWindowStart = Environment.TickCount64 / 1000.0;
     // DisplayFlip counts genuine display-area flips (NotifyDisplay seeing a
     // different X,Y -- the per-frame flip, not the GP1(06)/(07)/(08)

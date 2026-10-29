@@ -42,6 +42,50 @@ public sealed class Dma
         UpdateMaster();
     }
 
+    // The stream's per-sector enable is a byte read-modify-write of DICR+2
+    // (bits 16-23). A 32-bit store is the only access that used to reach
+    // _dicr, so that byte wrote a dead backing byte and the last sector never
+    // raised. The read has to come back from _dicr: the modify writes the
+    // byte it just read, and a zero from the backing store would clear the
+    // master bit the word write had set. Bits 24-30 stay write-1-to-clear.
+    public byte ReadReg8(uint phys)
+    {
+        var shift = (int)((phys - 0x1F8010F4u) & 3u) * 8;
+        return (byte)(_dicr >> shift);
+    }
+
+    public void WriteReg8(uint phys, byte value)
+    {
+        var shift = (int)((phys - 0x1F8010F4u) & 3u) * 8;
+        if (shift >= 24)
+        {
+            WriteDicr((_dicr & 0x00FFFFFFu) | ((uint)value << 24));
+            return;
+        }
+
+        var mask = 0xFFu << shift;
+        _dicr = (_dicr & ~(uint)mask) | ((uint)value << shift);
+        UpdateMaster();
+    }
+
+    public ushort ReadReg16(uint phys)
+    {
+        var shift = phys == 0x1F8010F6u ? 16 : 0;
+        return (ushort)(_dicr >> shift);
+    }
+
+    public void WriteReg16(uint phys, ushort value)
+    {
+        if (phys == 0x1F8010F6u)
+        {
+            WriteDicr((_dicr & 0x0000FFFFu) | ((uint)value << 16));
+            return;
+        }
+
+        _dicr = (_dicr & 0xFFFF0000u) | value;
+        UpdateMaster();
+    }
+
     private void UpdateMaster()
     {
         var flags = (_dicr >> 24) & 0x7Fu;
@@ -65,7 +109,7 @@ public sealed class Dma
             default: return;
         }
 
-        Complete(channel);
+        Complete(channel, channel == 3 ? WordCount(bcr) : 0);
     }
 
     private void TransferMdecIn(uint madr, uint bcr)
@@ -152,7 +196,9 @@ public sealed class Dma
         _mem.WriteU32(addr, 0x00FFFFFFu);
     }
 
-    private void Complete(int channel)
+    private static int _streamProbe;
+
+    private void Complete(int channel, uint words)
     {
         // 0004. Not gated on DICR: the library routine that would have set those
         // bits is the same one LibApi reimplements, so it never runs to set them.
@@ -163,10 +209,49 @@ public sealed class Dma
         Log.Irq($"dma ch {channel} dicr = 0x{_dicr:X8}");
         var master = (_dicr & (1u << 23)) != 0;
         var enabled = (_dicr & (1u << (16 + channel))) != 0;
-        if (!master || !enabled) return;
+        // The STR player clears the channel-3 enable around the header and around
+        // every body except the frame's last sector. The header has to stay
+        // quiet so its id survives the check. A body still has to raise: the
+        // only writer of ring status 2 is the DMA callback, and it has to run
+        // after this caller's status store, including on the sectors that are
+        // not the last one. The master bit is the callback registration.
+        var streamBody = channel == 3 && master && words > 16;
+        if ((!master || !enabled) && !streamBody)
+        {
+            if ((channel == 1 || channel == 3) && _streamProbe < 40)
+            {
+                _streamProbe++;
+                Console.WriteLine($"[DMA] ch{channel} IRQ skipped dicr=0x{_dicr:X8} words={words}");
+            }
+            return;
+        }
         _dicr |= 1u << (24 + channel);
         UpdateMaster();
-        _raiseIrq();
+        // Channel 3 is the CD stream. Its handler has to run after the
+        // caller's status store, and that caller polls once while it arms
+        // the rest of the sector. Other channels keep the immediate raise.
+        if (channel == 3) Interrupts.RaiseAfterPolls(3, 1);
+        else _raiseIrq();
+        if ((channel == 1 || channel == 3) && _streamProbe < 40)
+        {
+            _streamProbe++;
+            var prod = _mem.ReadU32(0x800EED64u);
+            var cons = _mem.ReadU32(0x800EED68u);
+            var wait = _mem.ReadU32(0x800EED6Cu);
+            var gate = _mem.ReadU32(0x800EED5Cu);
+            Console.WriteLine($"[DMA] ch{channel} raised words={words} prod={prod} cons={cons} wait={wait} gate={gate} {SlotStatus()}");
+        }
+    }
+
+    private string SlotStatus()
+    {
+        var sb = new System.Text.StringBuilder(24);
+        for (var i = 0; i < 8; i++)
+        {
+            if (i != 0) sb.Append(',');
+            sb.Append(_mem.ReadU16(0x8018D450u + (uint)(i * 0x20)).ToString());
+        }
+        return sb.ToString();
     }
 
     private static uint WordCount(uint bcr)

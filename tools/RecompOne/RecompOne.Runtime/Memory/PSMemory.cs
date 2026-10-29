@@ -105,7 +105,13 @@ public sealed class PSMemory : IMemory
         // PGXP never saw is refused rather than believed.
         Pgxp.PgxpMemory.Init(size);
 
-        _dma = new Dma(this, _gpu, _spu, _mdec, () => Runtime.DispatchIrq(3));
+        // The guest DMA handler has to stay pending across the CHCR store.
+        // Delivering IRQ 3 inside the store runs it before the caller has
+        // read the buffer: Kagero's stream callback stamps status 2 over the
+        // sector id, and the 0x0160 check then fails. On hardware that IRQ
+        // waits until the handler returns and the guest polls. LibApi.Complete
+        // still runs an HLE callback inside the transfer.
+        _dma = new Dma(this, _gpu, _spu, _mdec, () => Interrupts.Raise(3));
         PublishDevices();
         Bios.KromFont.InstallInto(_bios);
     }
@@ -344,6 +350,8 @@ public sealed class PSMemory : IMemory
             // into a primitive packet takes this path, so the store has to be
             // offered here too or nothing is ever bound to an address.
             if (GteVertexMap.Active) GteVertexMap.NoteWrite(phys, value);
+            if (phys == 0x000D18CCu && value == 5u && CdController.StreamProbeLeft > 0)
+                CdController.NoteStreamError(this);
             Unsafe.WriteUnaligned(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_ram), (nint)off), value);
             return;
         }
@@ -371,6 +379,7 @@ public sealed class PSMemory : IMemory
         TrackRead(phys, 1);
         if (_cd != null && IsCd(phys)) return _cd.Read(phys);
         if (Sio0.InRange(phys)) return (byte)_sio.Read(phys);
+        if (phys >= 0x1F8010F4u && phys <= 0x1F8010F7u) return _dma.ReadReg8(phys);
         return Resolve(address, 1)[0];
     }
 
@@ -389,6 +398,7 @@ public sealed class PSMemory : IMemory
         if (Sio0.InRange(phys)) return (ushort)_sio.Read(phys);
         if (phys == 0x1F801070u) return (ushort)Interrupts.ReadStat();
         if (phys == 0x1F801074u) return (ushort)Interrupts.ReadMask();
+        if (phys == 0x1F8010F4u || phys == 0x1F8010F6u) return _dma.ReadReg16(phys);
         if (Timers.InRange(phys) && _timers.TryRead(phys, out var tv)) return (ushort)tv;
         var s = Resolve(address, 2);
         return (ushort)(s[0] | (s[1] << 8));
@@ -451,6 +461,12 @@ public sealed class PSMemory : IMemory
             return;
         }
 
+        if (phys >= 0x1F8010F4u && phys <= 0x1F8010F7u)
+        {
+            _dma.WriteReg8(phys, value);
+            return;
+        }
+
         if (_frozenCount > 0 && phys < MemoryMap.RamWindow && _frozen[phys & _ramMask]) return;
         Resolve(address, 1)[0] = value;
     }
@@ -494,6 +510,12 @@ public sealed class PSMemory : IMemory
         if (phys == 0x1F801074u)
         {
             Interrupts.WriteMask(value);
+            return;
+        }
+
+        if (phys == 0x1F8010F4u || phys == 0x1F8010F6u)
+        {
+            _dma.WriteReg16(phys, value);
             return;
         }
 

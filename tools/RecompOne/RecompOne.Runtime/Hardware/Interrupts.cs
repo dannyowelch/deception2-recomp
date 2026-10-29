@@ -97,12 +97,21 @@ public static class Interrupts
         }
     }
 
+    /// <summary>
+    /// Run handlers that a DMA completion queued during the current poll.
+    /// The movie stream has to finish one sector's callback before the next
+    /// sector advances the producer, or a single callback skips the slots
+    /// in between.
+    /// </summary>
+    public static void FlushPending(CpuContext cpu, IMemory mem) => DrainPending(cpu, mem);
+
     private const int PollInterval = 2048;
 
     /// <summary>0047. Counts the polls that could have run a handler, so a caller can
     /// tell that nothing but its own code has touched memory since it last looked.</summary>
     public static uint SlowPolls;
     private static int _countdown = PollInterval;
+    private static int _deliverProbe;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Poll(CpuContext cpu, IMemory mem)
@@ -133,7 +142,10 @@ public static class Interrupts
         SlowPolls++;
         TickVBlank();
         Runtime.Timers?.Poll(RaiseTimer);
-        if (_inHandler || _servicing || !_irqEnabled) return;
+        // InGuestService: the movie pump is inside the guest CD service. A poll
+        // from there must not deliver the sector callback early or read the
+        // next sector into the fifo the guest is still using.
+        if (_inHandler || _servicing || !_irqEnabled || (Runtime.Cd?.InGuestService ?? false)) return;
 
         var snap = cpu.Snapshot();
         TakeExceptionStack(cpu);
@@ -144,6 +156,7 @@ public static class Interrupts
             BiosB.PumpCardEvents(cpu, mem);
             Sdk.LibCd.Pump();
             Runtime.Cd?.AdvanceStreaming();
+            Runtime.Cd?.PumpMovie(cpu, mem);
         }
         finally
         {
@@ -203,6 +216,22 @@ public static class Interrupts
         _countdown = 1;
     }
 
+    /// <summary>
+    /// Raise, but let the next <paramref name="skips"/> Poll calls return
+    /// without delivering. A CD sector's header DMA is followed by one Poll
+    /// inside the body DMA, and that Poll must not run the guest handler:
+    /// it stamps the sector status over the header before the caller stores
+    /// "transfer done".
+    /// </summary>
+    public static void RaiseAfterPolls(int irq, int skips)
+    {
+        if ((uint)irq >= _pending.Length) return;
+        _istat |= 1u << irq;
+        _pending[irq] = true;
+        var want = skips + 1;
+        if (_countdown > want) _countdown = want;
+    }
+
     public static void ClearPending()
     {
         Array.Clear(_pending);
@@ -235,6 +264,15 @@ public static class Interrupts
             return;
         }
 
+        if (irq == 3 && _deliverProbe < 16)
+        {
+            _deliverProbe++;
+            var prod = mem.ReadU32(0x800EED64u);
+            var cons = mem.ReadU32(0x800EED68u);
+            var wait = mem.ReadU32(0x800EED6Cu);
+            var gate = mem.ReadU32(0x800EED5Cu);
+            Console.WriteLine($"[IRQ3] deliver #{_deliverProbe} prod={prod} cons={cons} wait={wait} gate={gate}");
+        }
         _inHandler = true;
         try
         {

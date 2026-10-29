@@ -60,10 +60,17 @@ public static class LibApi
         // The transfer completes inside the store that started it, so the
         // callback runs on top of whatever the game was doing; give it back the
         // registers it had, the way Interrupts.Deliver does.
+        if (_cbProbe < 24)
+        {
+            _cbProbe++;
+            Console.WriteLine($"[DMA] callback ch{channel} -> 0x{cb:X8}");
+        }
         var snap = c.Snapshot();
         Dispatcher.Call(c, m, cb);
         c.Restore(snap);
     }
+
+    private static int _cbProbe;
 
     public static void PatchPad(CpuContext c, IMemory m)
     {
