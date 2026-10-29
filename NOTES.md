@@ -233,6 +233,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - The intro movie ran at the render rate, because its pacer never armed
 - Deception II restarts the Tecmo logo at frame 15
 - The title thread dies after the opening
+- Background music never leaves the intro
 - New game loads directory index 2 over the player
 - The menu deadlock: input only moved when the game drew
 - The ending screen

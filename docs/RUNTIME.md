@@ -458,6 +458,20 @@ The movie was then watched through to the title. The picture looks fine, and the
 
 **Measurement:** `KF2_PRESENT_PROBE=1`. The opening presented `rgb24` through frame 1898, then `[Dispatcher] overlay mdec overwritten by koku3`. For the next 40 seconds the probe printed about 60 plain presents every 2 seconds. The log has no `unmapped call`, no `thread 1 stopped`, and no `CD timeout`. The process was stopped there. The title does stay on screen: a button on the pad interrupts the opening, and the title answers.
 
+## Background music never leaves the intro
+
+**Symptom:** the intro's music plays. Sound effects play everywhere else. No background music does.
+
+**What the music is.** There is no `.SEQ` on this disc. `func_800756BC` locates `KOKU2XA0.STR` through `KOKU2XA5.STR` into the `CdlFILE` table at `0x800EB2B8`. `func_800757C0` is the player: `Setmode` `0xC8` (XA-ADPCM, filter, double speed), `Setfilter` with file `1` and the channel from the 6-byte records at `0x800C9A70`, `Setloc`, `ReadS`, then `GetlocL` against the track's end sector. The record is file slot, channel, sector span, and a flag. The first eight are file slot 0, channels 0–7, and channel 0's span is `0x9A68` (39528 sectors; the file is 40128). `CdControl` is the recompiled one, so the commands hit `CdController`. `CdSync` is the HLE and is not the stream.
+
+**The sectors.** A 2336-byte read of `KOKU2XA0.STR` (LBA 15799) and `KOKU2XA1.STR` (LBA 113239): every sector is mode 2, file `01`, channels `00`–`07` in order, submode `0x64` (real-time, form 2, audio), coding `0x01` (stereo, 37800 Hz). The user bytes are ADPCM, not an STR header. `KOKU2XA5.STR` is the same three channels with submode-0 padding between them. `OPENING.STR` and `TECMO.STR` are different: submode `0x48` STR video, and one submode `0x64` audio sector on channel `01`, and their mode is `0xC0` (filter off).
+
+**Why only the intro was audible.** `ReadS` always queued a data-ready. The movie callback reads a video header and leaves an audio sector in the fifo, and `TakeStrAudio` decodes that reject. A `KOKU2XA` sector is not video. The callback does not move the fifo, `PumpMovie` gives up before `TakeStrAudio`, and the data-ready stays latched in front of the player's later `GetlocL`. Eight channels at 150 sectors/s is 18.75 sectors/s of the selected channel, which is 37800 samples/s. Decoding every sector, or decoding them in the 16-iteration movie pump, would play the file at the wrong speed and run `GetlocL` to the end at once.
+
+**Fix:** `AppId == "deception2"` and mode bits 6 and 3 both set. `ReadS` arms `FeedXa` and completes the command with no data-ready. Each poll spends credit at 150 or 75 sectors/s (mode bit 7), capped at 16, and decodes a sector only when submode bit `0x04` is set and the file and channel match the filter. `GetlocL` and `GetlocP` do not end that read. `Setloc`, `Pause`, `Stop` and `Init` do, and they reset the XA ring. The movie's `ReadS` is unchanged. King's Field never takes this path.
+
+**Not heard yet.** The first decoded sector logs `[XA] file=… ch=… coding=… cdvol=…`. A `cdvol` of zero would still be silent. The picture of the intro is unchanged by this path; the music has to be listened to.
+
 ## New game loads directory index 2 over the player
 
 **Symptom:** from the title, starting a new game goes black. BIOS thread 1 throws `unmapped address: 0x304200FF` from `Deception2_mdec.func_800F35C4`, called through `func_800F3304`, `func_800F2DF8`, `func_800F29B4`, then `func_8001ACBC` and `func_800194B8`.
