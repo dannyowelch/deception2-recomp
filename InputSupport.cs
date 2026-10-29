@@ -360,11 +360,14 @@ public static class InputSupport
     }
 
     /// <summary>
-    /// func_80014510 builds <c>(buf[2] &lt;&lt; 8) | buf[3]</c> and inverts it. The
-    /// halfword it stores at 0x800E5ED8 is standard pad order, active high
-    /// (face buttons are 0xF000). That is <c>~Controller.State</c> when buf[2]
-    /// is the high byte and buf[3] the low byte. Sticks are the four bytes
-    /// the controller sends after the buttons: RightX, RightY, LeftX, LeftY.
+    /// func_80014510 builds <c>(buf[2] &lt;&lt; 8) | buf[3]</c> and inverts it.
+    /// On the wire buf[2] is the first button byte (Select, L3, R3, Start, Up,
+    /// Right, Down, Left) and buf[3] the second (L2, R2, L1, R1, Triangle,
+    /// Circle, Cross, Square), which is the low byte of <c>Controller.State</c>
+    /// then the high byte. The halfword at 0x800E5ED8 is that order, active
+    /// high, so 0xF000 is the D-pad and the face buttons are 0x00F0. Sticks are
+    /// the four bytes after the buttons: RightX, RightY, LeftX, LeftY.
+    /// See "The pad's two button bytes were reversed" in NOTES.md.
     /// </summary>
     static void WritePad(IMemory m, uint buf, bool connected, ushort state,
         byte rx, byte ry, byte lx, byte ly, bool analog)
@@ -377,8 +380,8 @@ public static class InputSupport
 
         m.WriteU8(buf, 0);
         m.WriteU8(buf + 1, analog ? (byte)0x73 : (byte)0x41);
-        m.WriteU8(buf + 2, (byte)(state >> 8));
-        m.WriteU8(buf + 3, (byte)state);
+        m.WriteU8(buf + 2, (byte)state);
+        m.WriteU8(buf + 3, (byte)(state >> 8));
         m.WriteU8(buf + 4, analog ? rx : (byte)0x80);
         m.WriteU8(buf + 5, analog ? ry : (byte)0x80);
         m.WriteU8(buf + 6, analog ? lx : (byte)0x80);

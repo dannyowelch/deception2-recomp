@@ -249,6 +249,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - A BIOS thread drew without a GL context
 - The window thread was blocked for the whole intro
 - Deception II reads a pad buffer nothing fills
+- The pad's two button bytes were reversed
 - Two general shapes worth keeping
 - Upstream contribution policy
 

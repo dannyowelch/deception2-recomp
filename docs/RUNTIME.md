@@ -1409,8 +1409,8 @@ This game does not call `InitPAD` or `PadInitDirect`. `func_80014290` calls
 `func_800C0A28(0x800D4958, 0x800D497A)`, and `func_80014510` reads those bytes
 on every movie frame: status 0 means the port is there, the id at +1 is analog
 when `(id & 0x70) == 0x70`, and the buttons are `(buf[2] << 8) | buf[3]`, then
-inverted. The halfword stored at `0x800E5ED8` is standard pad order, active high.
-`func_80058978` masks it with `0xF000`, the face buttons. The driver's own
+inverted. With the two bytes in the order a pad sends, `0xF000` is the D-pad.
+`func_80058978` masks that halfword with `0xF000`. The driver's own
 vsync handlers (`func_800BF094`, `func_800BF02C`) are stored at `0x800F250C` and
 `0x800F2510` and have no caller. `LibPad.Refresh` never sees the buffers.
 `BiosB.RefreshPad` writes a different buffer, and only after `InitPAD`.
@@ -1418,8 +1418,9 @@ vsync handlers (`func_800BF094`, `func_800BF02C`) are stored at `0x800F250C` and
 `InputSupport` posts `func_800C0A28` and the VSync thunk `func_800B0770`. Once
 init has returned, every VSync writes the host pad into the two buffers. Port 0
 is always present, so the keyboard is the pad when no controller is open. The
-bytes are the id (`0x41` or `0x73`), the button halves with the high byte at +2,
-and the sticks at +4..+7 (`RightX`, `RightY`, `LeftX`, `LeftY`, or `0x80`).
+bytes are the id (`0x41` or `0x73`), the button halves in wire order (the low
+byte of `Controller.State` at +2), and the sticks at +4..+7 (`RightX`, `RightY`,
+`LeftX`, `LeftY`, or `0x80`).
 Port 1 is status `0xFF` unless a second pad is connected. The post is after
 VSync returns, which is after the vblank IRQ, so the write is the one the next
 `func_80014510` reads. `Install` is idempotent and runs from `Program.cs`; the
@@ -1427,7 +1428,19 @@ hooks attach on the overlay load, because the live `Entry` does not call it.
 
 SDL logs `[Host] controller N open: <name>` when a pad opens, and
 `[Deception] input: publishing host pad into 0x800D4958.` on the first write.
-**Not run.** Whether a connected pad moves a menu or the title has not been judged.
+A connected pad does reach the game. The button order that first write used is the next section.
+
+## The pad's two button bytes were reversed
+
+**Symptom:** the gamepad does not do what the settings rows say. The D-pad fires Cross, Circle, Square and Triangle. The face buttons turn. The shoulders, Select and Start are the other group.
+
+**The word the game keeps.** `func_80014510` builds `(buf[2] << 8) | buf[3]` and inverts it into `0x800E5ED8`. A controller sends Select, L3, R3, Start and the D-pad in the first button byte, and L2, R2, L1, R1 and the face buttons in the second. That puts the D-pad in `0xF000` and the face buttons in `0x00F0`. Select and Start land in `0x0F00`, and the shoulders in `0x000F`.
+
+**What was written.** `Controller.State` keeps the other order: the D-pad in the low byte, the face buttons in the high byte. The first publish stored the high byte at +2, so the game's shift put the face buttons in the D-pad's slot and the D-pad in the face buttons' slot. The same exchange swaps the shoulders with Select and Start. The settings bind a host button to a `Controller` bit by name, so every row was one byte away from the button the game tests.
+
+**Fix:** `WritePad` stores the low byte at +2 and the high byte at +3, which is the order `BiosB.WritePadSlot` already uses for a pad the BIOS owns. The sticks stay RightX, RightY, LeftX, LeftY.
+
+**Measurement:** the read in `func_80014510` is `(byte at +2) << 8 | (byte at +3)`, then a bitwise not. The D-pad turns, and the face buttons, the shoulders, Select and Start match the settings rows. The game is playable.
 
 ## Two general shapes worth keeping
 
