@@ -232,6 +232,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - There were three fixed 60s, and only one of them is the host's
 - The intro movie ran at the render rate, because its pacer never armed
 - Deception II restarts the Tecmo logo at frame 15
+- The title thread dies after the opening
 - The menu deadlock: input only moved when the game drew
 - The ending screen
 - Holding the frame is faithful, and it still reads as a crash
@@ -245,6 +246,8 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - The menu bar starts hidden
 - Minimising froze the game on Wayland
 - A BIOS thread drew without a GL context
+- The window thread was blocked for the whole intro
+- Deception II reads a pad buffer nothing fills
 - Two general shapes worth keeping
 - Upstream contribution policy
 

@@ -442,7 +442,21 @@ poll retries it; the guest resets the data fifo itself. The same LBA was then
 accepted (error `0xA`) with the producer back at 1. An 18-second run decoded
 100 frames at depth 3 (38400 words) and then 168 at depth 2 (57600 words, the
 24-bit opening, presented as `rgb24`), every input consumed, no `MDEC_in_sync`.
-The continued picture has not been judged by eye.
+The movie was then watched through to the title. The picture looks fine, and the interleaved XA is audible.
+
+## The title thread dies after the opening
+
+**Symptom:** the opening plays, the title appears, then the picture goes black while the title music loops. Closing the window was the only way out.
+
+**Audio.** `PumpMovie` was handing the interleaved XA sectors to the video path, which rejected them. `TakeStrAudio` reads the 2336-byte sector, accepts submode bit `0x04`, honours the XA filter only when mode bit 3 is set, and gives the sector to `XaRouter`. The mode on this disc is `C0` (XA-ADPCM and double speed, filter off). The movie's own Pause goes to the controller, which now resets the XA ring there too. Heard: the intro music plays.
+
+**The gap after the movie.** The loader's blocking `CdControl` waits on the guest IRQ halfword at `0x800D194E`. Nothing raises CPU IRQ 2, so the only way into the handler is the controller noticing the guest read. `DeliverBlocking` (`AppId == "deception2"`) does that for Setloc, GetlocL and GetlocP, and a Setloc also `SeekTo`s the HLE position so the following `CdRead` is not LBA 0. A boot through the opening printed no `CD timeout`. The title picture did come up.
+
+**The black screen.** BIOS thread 1 then threw `unmapped call: 0x800FFA34` from `func_8003BEAC`. The audio thread kept mixing, and `PresentFrame` kept drawing the cleared buffer, which is the loop. The word at that address was `addiu sp, sp, -24`. It is not in the planted member `0x132`. `func_8001A700` reads KOKU directory index 3 (member `0xAE`, 270232 bytes at file offset `0x57000`) to `0x800F2800` after the opening. That image's word at `0x800F47D0` is `0x00002821`, the same word the previous run logged, and `0x800FFA34` is the prologue. The directory entry's first word is the sector offset inside `KOKU_DAT.BIN`, so the read starts at disc LBA 652.
+
+**Fix:** overlay `koku3` in `config/deception.json/Deception.json`, base `0x800F2800`, 803 functions. Entry loads every overlay, and this one covers the movie player, so `BootPlant` unloads it and puts `mdec` back. The post-movie `CdRead` matches LBA 652 and loads `koku3`, which replaces the player in the map. A call into that range that is still not a function returns without changing `V0`. A prologue the sweep missed still throws.
+
+**Measurement:** `KF2_PRESENT_PROBE=1`. The opening presented `rgb24` through frame 1898, then `[Dispatcher] overlay mdec overwritten by koku3`. For the next 40 seconds the probe printed about 60 plain presents every 2 seconds. The log has no `unmapped call`, no `thread 1 stopped`, and no `CD timeout`. The process was stopped there. Whether the title stays on screen, rather than a live loop drawing black, has not been judged by eye.
 
 ## The menu deadlock: input only moved when the game drew
 
@@ -1334,6 +1348,70 @@ title and fullscreen changes stay on the thread that created the window, whose
 id `Initialize` records. Drawing and the buffer swap run on whichever thread
 holds the context. Both context calls do nothing in headless mode. **Not run.**
 **No recompile.**
+
+## The window thread was blocked for the whole intro
+
+**Symptom:** clicking the host menu bar (System, Mods, Debug) while the Tecmo
+logo is playing makes the window not respond. The same click once the game is
+back on the thread that created the window does not.
+
+**Mechanism.** The opening runs on a BIOS thread. `BiosB.ChangeTh` blocks the
+creating thread on `Baton.Wait` until that thread returns, and `0111` moved the
+GL context across with the baton so the movie can draw. `HostWindow.Present`
+only calls `DoEvents` and `InputManager.Poll` when it is on the creating thread,
+so for the whole movie nothing pumps the window and nothing reads the host pad.
+Windows treats a window whose thread never dispatches the click as not responding.
+
+The wait on the creating thread is now `Wait(2)` plus `HostWindow.ServiceWhileBlocked`.
+That method is `DoEvents`, the input poll, and the top-bar and fullscreen toggles.
+It does not draw, does not take the GL context, and does not call `Interrupts.Poll`.
+A poll from this loop would deliver the STR DMA callback before the player stores
+the sector id, which is the error-5 path in "Deception II restarts the Tecmo logo
+at frame 15". A thread that is not the creating thread still uses the bare wait.
+
+`glfwPollEvents` and `glfwSwapBuffers` take the same GLFW lock. Holding one lock
+across both, or peeking messages while the swap holds it, deadlocks the window
+thread with the movie thread. An interlocked word covers the gap instead: the
+creating thread takes it for the pump and skips the tick when a present holds it,
+and the presenting thread waits only for the pump, which does not wait for it.
+A gap of one frame does not ghost the window. Drawing and the swap stay on the
+thread that holds the context.
+
+**Not run.** The picture has not been judged. A movie that has stopped calling
+`VSync` still will not paint the menu until the next present; the pump only keeps
+the window dispatching. If `TECMO.STR` still reopens at LBA 160637 after this,
+the status-2 writer is the next place to look, not this pump.
+
+## Deception II reads a pad buffer nothing fills
+
+**Symptom:** a controller does nothing. The keyboard does nothing during the
+intro, for the same reason as the menu: the poll never runs. After the opening,
+the keyboard can work, because the boot thread is the creating thread again and
+`Present` polls. The controller still does nothing.
+
+This game does not call `InitPAD` or `PadInitDirect`. `func_80014290` calls
+`func_800C0A28(0x800D4958, 0x800D497A)`, and `func_80014510` reads those bytes
+on every movie frame: status 0 means the port is there, the id at +1 is analog
+when `(id & 0x70) == 0x70`, and the buttons are `(buf[2] << 8) | buf[3]`, then
+inverted. The halfword stored at `0x800E5ED8` is standard pad order, active high.
+`func_80058978` masks it with `0xF000`, the face buttons. The driver's own
+vsync handlers (`func_800BF094`, `func_800BF02C`) are stored at `0x800F250C` and
+`0x800F2510` and have no caller. `LibPad.Refresh` never sees the buffers.
+`BiosB.RefreshPad` writes a different buffer, and only after `InitPAD`.
+
+`InputSupport` posts `func_800C0A28` and the VSync thunk `func_800B0770`. Once
+init has returned, every VSync writes the host pad into the two buffers. Port 0
+is always present, so the keyboard is the pad when no controller is open. The
+bytes are the id (`0x41` or `0x73`), the button halves with the high byte at +2,
+and the sticks at +4..+7 (`RightX`, `RightY`, `LeftX`, `LeftY`, or `0x80`).
+Port 1 is status `0xFF` unless a second pad is connected. The post is after
+VSync returns, which is after the vblank IRQ, so the write is the one the next
+`func_80014510` reads. `Install` is idempotent and runs from `Program.cs`; the
+hooks attach on the overlay load, because the live `Entry` does not call it.
+
+SDL logs `[Host] controller N open: <name>` when a pad opens, and
+`[Deception] input: publishing host pad into 0x800D4958.` on the first write.
+**Not run.** Whether a connected pad moves a menu or the title has not been judged.
 
 ## Two general shapes worth keeping
 

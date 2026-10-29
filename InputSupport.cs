@@ -1,6 +1,7 @@
 using System.Reflection;
 using RecompOne.Runtime.Config;
 using RecompOne.Runtime.Context;
+using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Events;
 using RecompOne.Runtime.Hardware;
 using RecompOne.Runtime.Host;
@@ -121,7 +122,38 @@ public static class InputSupport
     /// <summary>True when the player was walking on the last completed scheduler pass.</summary>
     public static bool Walking => _walking;
 
+    static int _installOnce;
+    static bool _armed;
+    static bool _padLive;
+    static bool _padAnnounced;
+
+    // func_80014290 passes these to func_800C0A28. 0x22 bytes apart.
+    const uint Pad0 = 0x800D4958u;
+    const uint Pad1 = 0x800D497Au;
+    const uint PadInit = 0x800C0A28u;
+    const uint PadVSync = 0x800B0770u;
+
     public static void Install()
+    {
+        if (Interlocked.Exchange(ref _installOnce, 1) != 0) return;
+        // The live Entry does not call this, and SymbolRegistry is empty until
+        // the boot overlays are registered. The load event is after both.
+        HookAttach.OnOverlayLoad("input", Attach, "The host pad will not reach the game.");
+    }
+
+    static bool Attach()
+    {
+        SymbolRegistry.Build();
+        if (!_armed)
+        {
+            _armed = true;
+            Arm();
+        }
+
+        return AttachPad();
+    }
+
+    static void Arm()
     {
         MigrateStockKeys();
         EnsureMenuKeys();
@@ -182,7 +214,7 @@ public static class InputSupport
                 (menuWalkOk ? "func_800C186C" : "missing func_800C186C") +
                 " (mode menu), sampled at func_80016028.");
         }
-        else
+        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd") || Dispatcher.Overlays.ContainsKey("kokumei"))
         {
             Console.Error.WriteLine(
                 $"[Deception] input: walk detector did not resolve " +
@@ -199,7 +231,7 @@ public static class InputSupport
             HookManager.AddPost(Self, freeStep, self.GetMethod(nameof(OnFreeMove), flags)!);
             hooked = true;
         }
-        else
+        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
         {
             Console.Error.WriteLine(
                 $"[Deception] input: free-roam step hook did not resolve " +
@@ -217,7 +249,7 @@ public static class InputSupport
                 "and look scales the step func_800DBFB4 just wrote. " +
                 "Mouse X turns and mouse Y looks. Escape captures and releases.");
         }
-        else
+        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
         {
             Console.Error.WriteLine(
                 $"[Deception] input: free-roam look hook did not resolve " +
@@ -245,7 +277,7 @@ public static class InputSupport
             Console.WriteLine(
                 "[Deception] input: a blocked mode-menu probe still applies the turn at player+0xE.");
         }
-        else
+        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
         {
             Console.Error.WriteLine(
                 $"[Deception] input: mode-menu mover hook did not resolve " +
@@ -259,7 +291,7 @@ public static class InputSupport
                 "[Deception] input: mode-menu stick scales that step (full deflection is " +
                 "180 forward, 143 strafe, 66 turn, 32 look).");
         }
-        else
+        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
         {
             Console.Error.WriteLine(
                 $"[Deception] input: mode-menu analog hooks did not resolve " +
@@ -268,6 +300,89 @@ public static class InputSupport
         }
 
         if (hooked) HookManager.Commit();
+    }
+
+    /// <summary>
+    /// func_800C0A28 installs the two libpad buffers. Publishing before it
+    /// returns would race the 0xFF fill. The VSync thunk is func_800B0770,
+    /// which returns after the vblank IRQ, so this write is the last one the
+    /// next func_80014510 sees.
+    /// </summary>
+    static bool AttachPad()
+    {
+        var init = SymbolRegistry.Resolve("main", null, PadInit);
+        var vsync = SymbolRegistry.Resolve("main", null, PadVSync);
+        if (init?.Name != "func_800C0A28" || vsync?.Name != "func_800B0770")
+            return false;
+
+        var flags = BindingFlags.Public | BindingFlags.Static;
+        var self = typeof(InputSupport);
+        if (!HookManager.IsRegistered(init))
+            HookManager.AddPost(Self, init, self.GetMethod(nameof(OnPadReady), flags)!);
+        if (!HookManager.IsRegistered(vsync))
+            HookManager.AddPost(Self, vsync, self.GetMethod(nameof(OnPadVSync), flags)!);
+        HookManager.Commit();
+        var committed = HookManager.IsCommitted(init) && HookManager.IsCommitted(vsync);
+        if (committed)
+            Console.WriteLine(
+                "[Deception] input: host pad publishes into 0x800D4958 after VSync.");
+        return committed;
+    }
+
+    public static void OnPadReady(CpuContext c, IMemory m)
+    {
+        _padLive = true;
+        PublishPad(m);
+    }
+
+    public static void OnPadVSync(CpuContext c, IMemory m)
+    {
+        if (!_padLive) return;
+        PublishPad(m);
+    }
+
+    static void PublishPad(IMemory m)
+    {
+        if (!_padAnnounced)
+        {
+            _padAnnounced = true;
+            Console.WriteLine("[Deception] input: publishing host pad into 0x800D4958.");
+        }
+
+        // Port 0 is always present: the keyboard is the pad when no controller is.
+        WritePad(m, Pad0, true, Controller.State,
+            Controller.RightX, Controller.RightY, Controller.LeftX, Controller.LeftY, Controller.Analog);
+        if (Controller.Connected2)
+            WritePad(m, Pad1, true, Controller.State2,
+                Controller.RightX2, Controller.RightY2, Controller.LeftX2, Controller.LeftY2, Controller.Analog2);
+        else
+            WritePad(m, Pad1, false, 0xFFFF, 0x80, 0x80, 0x80, 0x80, false);
+    }
+
+    /// <summary>
+    /// func_80014510 builds <c>(buf[2] &lt;&lt; 8) | buf[3]</c> and inverts it. The
+    /// halfword it stores at 0x800E5ED8 is standard pad order, active high
+    /// (face buttons are 0xF000). That is <c>~Controller.State</c> when buf[2]
+    /// is the high byte and buf[3] the low byte. Sticks are the four bytes
+    /// the controller sends after the buttons: RightX, RightY, LeftX, LeftY.
+    /// </summary>
+    static void WritePad(IMemory m, uint buf, bool connected, ushort state,
+        byte rx, byte ry, byte lx, byte ly, bool analog)
+    {
+        if (!connected)
+        {
+            m.WriteU8(buf, 0xFF);
+            return;
+        }
+
+        m.WriteU8(buf, 0);
+        m.WriteU8(buf + 1, analog ? (byte)0x73 : (byte)0x41);
+        m.WriteU8(buf + 2, (byte)(state >> 8));
+        m.WriteU8(buf + 3, (byte)state);
+        m.WriteU8(buf + 4, analog ? rx : (byte)0x80);
+        m.WriteU8(buf + 5, analog ? ry : (byte)0x80);
+        m.WriteU8(buf + 6, analog ? lx : (byte)0x80);
+        m.WriteU8(buf + 7, analog ? ly : (byte)0x80);
     }
 
     /// <summary>Pre-hook. Only the step inside func_800DBBCC may spend mouse yaw.</summary>
