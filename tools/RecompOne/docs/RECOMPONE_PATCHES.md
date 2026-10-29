@@ -2063,6 +2063,18 @@ Four files in the directory have no entry below:
   input polling, and title and fullscreen changes stay on the creating thread
   (its id is recorded in `Initialize`); drawing and the buffer swap do not.
   Both context calls no-op in headless mode. **Not run.** **No recompile.**
+- `0112-pump-while-the-creating-thread-is-blocked.patch` — `0111` blocks the
+  creating thread in `Baton.Wait` for the whole time a `psx-th` runs, and
+  `Present` only pumps events on that thread, so a click during the intro is
+  never dispatched and Windows marks the window not responding. The creating
+  thread now waits two milliseconds at a time and calls
+  `HostWindow.ServiceWhileBlocked` (`DoEvents`, `InputManager.Poll`, the
+  top-bar and fullscreen toggles). It does not draw, does not take the GL
+  context, and does not call `Interrupts.Poll`. A present and that pump share
+  an interlocked word (idle / pumping / presenting) instead of a lock around
+  the swap: the pump skips while a present holds it, and the present waits
+  only for the pump. `PeekMessage` is not used. A `psx-th` waiting on another
+  `psx-th` still uses the bare wait. **Not run.** **No recompile.**
 
 ## Package bumps
 

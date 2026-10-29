@@ -707,7 +707,24 @@ public static class BiosB
 
         if (Gone(from, self)) throw new ThreadGone();
 
-        self.Baton.Wait();
+        // 0112. The creating thread is the only one GLFW will poll on. A bare
+        // wait here is the whole intro: the movie runs on psx-th, and a click
+        // on the window is never dispatched, so Windows marks it not responding.
+        // A psx-th blocked on another psx-th keeps the bare wait. The service
+        // call pumps events only; it does not draw and it does not poll guest IRQs.
+        if (HostWindow.IsCreatingThread)
+        {
+            while (!self.Baton.Wait(2))
+            {
+                if (Gone(from, self)) throw new ThreadGone();
+                HostWindow.ServiceWhileBlocked();
+            }
+        }
+        else
+        {
+            self.Baton.Wait();
+        }
+
         if (Gone(from, self)) throw new ThreadGone();
 
         HostWindow.AcquireGl();

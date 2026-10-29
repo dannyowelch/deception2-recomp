@@ -29,6 +29,41 @@ public static class HostWindow
 
     private static bool OnWindowThread => _windowThread == Environment.CurrentManagedThreadId;
 
+    internal static bool IsCreatingThread =>
+        _windowThread != 0 && _windowThread == Environment.CurrentManagedThreadId;
+
+    // 0112. glfwPollEvents and glfwSwapBuffers take the same GLFW lock, and a
+    // lock held across the swap deadlocks Windows sent messages. This is not a
+    // lock: 0 idle, 1 the creating thread is inside DoEvents, 2 a thread is
+    // drawing or swapping. The creating thread takes 1 or skips. The presenting
+    // thread waits only while 1 is held, which does not wait on it. Neither
+    // side calls PeekMessage. A gap of one frame does not ghost the window.
+    const int GatePump = 1;
+    const int GatePresent = 2;
+    static int _hostGate;
+    [ThreadStatic] static int _holdDepth;
+
+    static void HoldPresent()
+    {
+        if (_holdDepth > 0)
+        {
+            _holdDepth++;
+            return;
+        }
+
+        var spin = new SpinWait();
+        while (Interlocked.CompareExchange(ref _hostGate, GatePresent, 0) != 0)
+            spin.SpinOnce();
+        _holdDepth = 1;
+    }
+
+    static void DropPresent()
+    {
+        if (_holdDepth == 0) return;
+        if (--_holdDepth > 0) return;
+        Volatile.Write(ref _hostGate, 0);
+    }
+
     private static uint _displayTex;
     private static uint _vramTex;
     private static uint _ramTex;
@@ -460,6 +495,19 @@ public static class HostWindow
     /// swap mode says.</summary>
     private static void RenderFrame()
     {
+        HoldPresent();
+        try
+        {
+            RenderFrameCore();
+        }
+        finally
+        {
+            DropPresent();
+        }
+    }
+
+    private static void RenderFrameCore()
+    {
         if (_swapMode == SwapMode.VBlank)
         {
             _window!.DoRender();
@@ -490,9 +538,22 @@ public static class HostWindow
     /// <summary>Put the frame that is waiting on the screen, if one is.</summary>
     private static void SwapPending()
     {
-        if (!_swapPending) return;
-        _swapPending = false;
-        _window!.GLContext?.SwapBuffers();
+        HoldPresent();
+        try
+        {
+            if (!_swapPending) return;
+            // The context follows the BIOS baton (0111). A swap from the creating
+            // thread while a psx-th is current has no context, and would take
+            // GLFW's lock on the wrong thread. Leave the frame pending.
+            var ctx = _window?.GLContext;
+            if (ctx is null || !ctx.IsCurrent) return;
+            _swapPending = false;
+            ctx.SwapBuffers();
+        }
+        finally
+        {
+            DropPresent();
+        }
     }
 
     /// <summary>Take the swap from Silk, or hand it back with anything waiting shown
@@ -514,34 +575,59 @@ public static class HostWindow
     public static void PumpEvents()
     {
         if (_headless || _window == null || !OnWindowThread) return;
+        DrainWindowThread();
+    }
 
-        ApplyMouseCaptureRequest();
-        
+    /// <summary>Events and input while <c>BiosB.ChangeTh</c> has the creating
+    /// thread blocked. Drawing stays on the thread that holds the GL context.
+    /// Does nothing off that thread, headless, or while a present owns the
+    /// window. Does not call <c>Interrupts.Poll</c>: a poll from here delivers
+    /// the STR DMA callback before the player stores its sector id.</summary>
+    internal static void ServiceWhileBlocked()
+    {
+        if (_headless || _window == null || !OnWindowThread) return;
+        if (Interlocked.CompareExchange(ref _hostGate, GatePump, 0) != 0) return;
+        _holdDepth = 1;
         try
         {
-            _window.DoEvents();
+            DrainWindowThread();
+        }
+        finally
+        {
+            _holdDepth = 0;
+            Volatile.Write(ref _hostGate, 0);
+        }
+    }
+
+    static void DrainWindowThread()
+    {
+        ApplyMouseCaptureRequest();
+
+        try
+        {
+            _window!.DoEvents();
         }
         catch (Exception e)
         {
             Console.WriteLine(e.Message);
         }
-        
-        if (_window.IsClosing)
+
+        if (_window!.IsClosing)
         {
             Runtime.Shutdown();
             Environment.Exit(0);
         }
-        
+
         InputManager.Poll();
         ApplyWindowLayout();
-        
+
         if (InputManager.ConsumeTopBarToggle())
         {
             ConfigManager.View.HideTopBar = !ConfigManager.View.HideTopBar;
             ConfigManager.SaveView(PanelManager.Panels);
             AdjustForMenuBar();
         }
-        
+
         if (InputManager.ConsumeFullscreenToggle())
         {
             ConfigManager.View.Fullscreen = !ConfigManager.View.Fullscreen;

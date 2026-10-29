@@ -30,7 +30,7 @@ public static class EntryWriter
             entry.AppendLine($"        Dispatcher.Register(\"{name}\", new {DispatchTableName(name)}());");
         // generated/ is not committed. The walk detector resolves symbols only
         // after Register, so a regen of this game has to keep the call.
-        if (className == "Deception")
+        if (className is "Deception" or "Deception2")
             entry.AppendLine("        Deception.InputSupport.Install();");
         entry.AppendLine("        RecompOne.Runtime.Modding.ModLoader.LoadAll();");
         entry.AppendLine($"        cd.LoadToMemory(\"{bootExe}\", 0x{exe.Destination:X8}u, 0x800, {exe.TextSize});");

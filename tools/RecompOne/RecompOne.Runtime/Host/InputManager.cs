@@ -97,8 +97,9 @@ internal static unsafe class InputManager
             _sdl.InitSubSystem(Sdl.InitGamecontroller);
             Rescan();
         }
-        catch
+        catch (Exception e)
         {
+            Console.Error.WriteLine($"[Host] gamepad init failed: {e.Message}");
             _sdl = null;
         }
     }
@@ -408,7 +409,21 @@ internal static unsafe class InputManager
         }
 
         var ctrl = _sdl.GameControllerOpen(pick);
-        if (ctrl == null) used.Remove(pick);
+        if (ctrl == null)
+        {
+            used.Remove(pick);
+            return null;
+        }
+
+        var name = "";
+        foreach (var f in found)
+        {
+            if (f.Index != pick) continue;
+            name = f.Name;
+            break;
+        }
+
+        Console.WriteLine($"[Host] controller {pick} open: {(string.IsNullOrEmpty(name) ? "controller" : name)}");
         return ctrl;
     }
 
