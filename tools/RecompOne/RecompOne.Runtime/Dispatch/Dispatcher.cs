@@ -408,6 +408,24 @@ public static class Dispatcher
         
         if (IsReturnSite(m, addr)) return;
 
+        // A jal into the KOKU plant at 0x800F2800 that no loaded overlay owns.
+        // Member 0xAE is the koku3 overlay and runs through the map. What
+        // remains is data. Returning leaves V0 alone. A real prologue the
+        // sweep missed still throws, so a new member is not swallowed.
+        if (Runtime.AppId == "deception2"
+            && addr >= 0x800F2800u && addr < 0x800F2800u + 0xAAC5Cu
+            && (addr & 3u) == 0)
+        {
+            var w = m.ReadU32(addr);
+            if ((w & 0xFFFF0000) != 0x27BD0000 || (short)w >= 0)
+            {
+                lock (_reported)
+                    if (_reported.Add(addr))
+                        Console.WriteLine($"[Dispatcher] data call 0x{addr:X8} word=0x{w:X8}");
+                return;
+            }
+        }
+
         if (!Tolerant) throw new InvalidOperationException($"unmapped call: 0x{addr:X8}");
 
         lock (_reported)

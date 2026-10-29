@@ -273,10 +273,47 @@ public static class OverlayWriter
                     slotOwners[func.Start] = result.Name;
         }
 
-        var kokumeiKnown = new Dictionary<uint, string>(knownFuncs.Count);
-        foreach (var kv in knownFuncs)
-            if (!slotOwners.ContainsKey(kv.Key))
-                kokumeiKnown[kv.Key] = kv.Value;
+        // A function start that also lies in another overlay's image is a shared
+        // slot (bin_3dmd/enty/plan at 0x800B3578, and Kagero's plant at 0x800F2800).
+        // Only the owner may call it by name. Anyone else has to dispatch, because
+        // the resident image is what should run. See "New game loads directory
+        // index 2 over the player" in NOTES.md.
+        var ownerOf = new Dictionary<uint, string>();
+        foreach (var f in allFuncs)
+            if (uniqueAddrs.Contains(f.Start))
+                ownerOf[f.Start] = f.OverlayName;
+
+        var sharedSlot = new HashSet<uint>();
+        foreach (var f in allFuncs)
+        {
+            if (!ownerOf.ContainsKey(f.Start)) continue;
+            var addr = f.Start & 0x1FFFFFFFu;
+            foreach (var other in overlayResults)
+            {
+                if (other.Name == f.OverlayName || other.Base == 0 || other.Size == 0) continue;
+                var start = other.Base & 0x1FFFFFFFu;
+                if (addr >= start && addr < start + other.Size)
+                {
+                    sharedSlot.Add(f.Start);
+                    break;
+                }
+            }
+        }
+
+        Console.WriteLine($"[Recompiler] shared-slot starts: {sharedSlot.Count}");
+
+        Dictionary<uint, string> KnownFor(string caller)
+        {
+            var known = new Dictionary<uint, string>(knownFuncs.Count);
+            foreach (var kv in knownFuncs)
+            {
+                if (caller == "kokumei" && slotOwners.ContainsKey(kv.Key)) continue;
+                if (sharedSlot.Contains(kv.Key) && ownerOf[kv.Key] != caller) continue;
+                known[kv.Key] = kv.Value;
+            }
+
+            return known;
+        }
 
         var conflictCount = allFuncs.Count - knownFuncs.Count;
         Console.WriteLine($"[Recompiler] total functions: {allFuncs.Count}");
@@ -295,7 +332,7 @@ public static class OverlayWriter
         foreach (var result in overlayResults)
         {
             Console.WriteLine($"[Recompiler] emiting {result.Name}.cs ({result.Functions.Count} functions)");
-            var known = result.Name == "kokumei" ? kokumeiKnown : knownFuncs;
+            var known = KnownFor(result.Name);
             EmitOverlayFile(result.Name, overlayParts[result.Name], known, config.Debug,
                 config.AddressComments, config.DisasmComments, result.LbaStart, result.Base, result.Size,
                 result.Instructions, outDir,
