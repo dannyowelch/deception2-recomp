@@ -47,6 +47,10 @@ useful than the question was.
    [GAME_INTERNALS.md](GAME_INTERNALS.md). The memory card is closed as far as
    playing goes — what has *not* been exercised is creating a save on an
    empty card, deleting one, or a card the game considers corrupt.
+   Kagero's overwrite is a different path: it renames the file first, and
+   `B(44h)` used to return 0, so a new file saved and an existing one did not.
+   That rename is `0113` ("Saving over a file renames it" in
+   [RUNTIME.md](RUNTIME.md)). The save screen has not been looked at since.
 2. ~~**Look for the module families the group-of-three pattern misses.**~~ Done —
    all 70 `FDAT.T` entries and every other file on the disc were tested for the
    module signature; the nine declared modules are the only code, and every

@@ -1480,6 +1480,20 @@ A connected pad does reach the game. The button order that first write used is t
 
 **Measurement:** the read in `func_80014510` is `(byte at +2) << 8 | (byte at +3)`, then a bitwise not. The D-pad turns, and the face buttons, the shoulders, Select and Start match the settings rows. The game is playable.
 
+## Saving over a file renames it
+
+**Symptom:** a new file on the memory card saves. Saving over a file that is already there fails.
+
+**What the game does.** `titleov`'s save is the state byte at `0x800ECEED`, entered from `0x801BA120` with the chosen file's id in `a1`. Id 0 creates. Any other id overwrites. State 0 (`0x801BE7FC`) builds `bu00:BASLUS-00677` plus the next free id (`0x801BED9C`, the id plus `0x40`, so the first file is `A`) at filename offset 17. State 1 (`0x801BE948`) is the create: `open` with mode `0x10200`, one block, then close. State 2 (`0x801BE984`) is the overwrite. It copies the name, puts the existing id's character at offset 17, and `strncmp`s that against the new name for 24 bytes. When they differ it calls `B(44h) rename` (`0x8008FFB0`) with the existing name and then the new one. A nonzero return sets state 3. Zero returns 255, which the caller treats as failure. State 3 opens the new name with mode 2 and writes the 8192 bytes, 512 at a time.
+
+The id comes from the directory scan at `0x801BDCFC`. `firstfile` / `nextfile` fill a dirent whose name is `BASLUS-00677` plus the slot character, and byte 12 of that name minus `0x40` is stored at `0x800ECEBC`.
+
+**What was wrong.** `B(44h)` was a stub that returned 0, so every overwrite stopped in state 2. A new file never calls rename. Returning 1 without changing the directory would still fail: state 3 opens the new name, and that file does not exist until the entry is renamed.
+
+**Fix:** `0113`. `MemoryCard.Rename` writes the new name over the first directory frame's 20 bytes, fixes the frame checksum, and leaves the block chain and the file's bytes in place. `B(44h)` returns 1 when that works and 0 when the old file is missing, the new name is another file, or the two paths are different cards.
+
+**Not looked at.** The directory change was checked on a card image: `BASLUS-00677A` becomes `BASLUS-00677B`, the block and the byte written into it stay, a second file keeps its own name, and a rename onto that name is refused. The save screen itself has not been tried.
+
 ## Two general shapes worth keeping
 
 `0007`, `0008` and `patches/EndingHold.cs` are the pattern to keep in mind:

@@ -252,6 +252,7 @@ What a static recompilation loses (interrupts, VSync-driven work) and the patche
 - The gameplay frame is three vblanks
 - Deception II reads a pad buffer nothing fills
 - The pad's two button bytes were reversed
+- Saving over a file renames it
 - Two general shapes worth keeping
 - Upstream contribution policy
 
