@@ -96,6 +96,20 @@ public static class BiosA
         return 1u;
     }
 
+    // 0113. B(44h) rename returns 1 or 0. Both names carry "bu00:" or "bu10:".
+    // A rename from one card to the other fails.
+    public static uint CardRename(IMemory m, uint oldPtr, uint newPtr)
+    {
+        var oldPath = Bios.ReadString(m, oldPtr);
+        var newPath = Bios.ReadString(m, newPtr);
+        var card = CardFor(oldPath);
+        var dest = CardFor(newPath);
+        if (card == null || !ReferenceEquals(card, dest)) return 0u;
+        if (!card.Rename(CardName(oldPath), CardName(newPath))) return 0u;
+        CardIoDone(card);
+        return 1u;
+    }
+
     public static uint CardFormat(IMemory m, uint pathPtr)
     {
         var card = CardFor(Bios.ReadString(m, pathPtr));

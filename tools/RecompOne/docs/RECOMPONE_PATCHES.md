@@ -2075,6 +2075,16 @@ Four files in the directory have no entry below:
   the swap: the pump skips while a present holds it, and the present waits
   only for the pump. `PeekMessage` is not used. A `psx-th` waiting on another
   `psx-th` still uses the bare wait. **Not run.** **No recompile.**
+- `0113-memory-card-rename.patch` — `B(44h) rename` returned 0. A save onto a
+  new file creates it and writes it; a save over an existing file renames that
+  directory entry to the next free slot character and then opens the new name,
+  and a 0 from rename is the save's failure (Kagero: Deception II, `titleov`
+  `0x801BEA74`). `MemoryCard.Rename` writes the new 20-byte name into the first
+  directory frame, fixes its checksum and leaves the chain and the file bytes
+  where they are. The same name succeeds. A missing file, a new name another
+  file already has, or a rename from one card onto the other returns 0.
+  **No recompile.** The directory change was checked on a card image. The
+  overwrite on the save screen has not been looked at.
 
 ## Package bumps
 

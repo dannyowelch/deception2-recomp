@@ -508,7 +508,7 @@ public static class BiosB
             case 0x41: c.V0 = BiosA.CardFormat(m, c.A0); break;
             case 0x42: c.V0 = BiosA.FirstFile(m, c.A0, c.A1); break;
             case 0x43: c.V0 = BiosA.NextFile(m, c.A0); break;
-            case 0x44: c.V0 = 0u; break;
+            case 0x44: c.V0 = BiosA.CardRename(m, c.A0, c.A1); break;
             case 0x45: c.V0 = BiosA.CardDelete(m, c.A0); break;
             case 0x46: c.V0 = 0u; break;
             case 0x47: c.V0 = GetFreeEvSlot(); break;

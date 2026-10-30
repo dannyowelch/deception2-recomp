@@ -262,6 +262,29 @@ public sealed class MemoryCard
         Flush();
     }
 
+    // 0113. B(44h) rename. The first directory frame's 20-byte name changes.
+    // The chain and the file's bytes stay, which is how a save over an existing
+    // file rewrites it: the game renames the entry, then opens the new name.
+    // A missing file, or a new name some other file already has, fails. The
+    // same name succeeds and writes nothing.
+    public bool Rename(string oldName, string newName)
+    {
+        if (oldName.Length == 0 || newName.Length == 0) return false;
+        if (newName.Length > 20) newName = newName[..20];
+        var first = Find(oldName);
+        if (first == 0) return false;
+        if (oldName == newName) return true;
+        if (Find(newName) != 0) return false;
+
+        var o = first * Fr + 0x0A;
+        for (var k = 0; k < 20; k++) _d[o + k] = 0;
+        var nb = Encoding.ASCII.GetBytes(newName);
+        for (var k = 0; k < nb.Length; k++) _d[o + k] = nb[k];
+        Fix(first * Fr);
+        Flush();
+        return true;
+    }
+
     public List<(string name, int size)> Match(string pattern)
     {
         var r = new List<(string, int)>();
