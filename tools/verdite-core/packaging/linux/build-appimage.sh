@@ -98,6 +98,14 @@ if [ -n "$found" ]; then
     exit 1
 fi
 
+# appimagetool (continuous, build 333, 2026-10-29) refuses a file the owner can
+# execute unless the group and everyone else can too, and it makes nothing.
+# A published linux-x64 tree arrives as 0744. a+rX adds the missing bits on a
+# file that is already executable and on every directory, and leaves a file
+# that was not executable unexecutable.
+chmod -R a+rX "$APPDIR"
+chmod a+rx "$APPDIR/AppRun"
+
 echo "==> appimagetool"
 TOOL="${APPIMAGETOOL:-}"
 if [ -z "$TOOL" ]; then
