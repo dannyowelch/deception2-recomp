@@ -1,5 +1,27 @@
 # Input: pad, sticks, keyboard and mouse
 
+## Kagero: walk, strafe and turn
+
+Standing play does not look up or down. `koku3` `func_80113E80` is the walk tick, and it is the standing-walk case of the player state switch. While the L2 hold is zero it calls `func_80114634` (forward at the vector's +4, strafe at +0) and `func_801148F8` (yaw at +2). While L2 is held it skips both writers. `func_801130F0` then runs `func_80117444`, which is the retail free look: L2 plus the D-pad. That path is left as the game wrote it. Right-stick Y and mouse Y are not bound to it.
+
+The four stick bytes the sampler copies onward are unread. Magnitude replaces the halfword the writer just stored. The speed byte is `0x800E7C53`. `s = (byte + 0x32) & 0xFF`. Forward's full step is `s`. Back's is the game's signed multiply by `0x66666667` then arithmetic `>> 2` of `3 * s`. Strafe's is the same of `4 * s`. Turn's full step is the raw byte while the L1 or R1 hold is nonzero, and the same multiply of `byte << 3` otherwise. For `s = 50` that is forward 50, back 15, strafe 20. For speed byte 10 a turn with a shoulder held is 10, and a turn alone is 8.
+
+A live stick writes the shaped axis times that full step and drops the diagonal reduction the writer applies when a shoulder is held with a direction. An idle stick leaves the halfword, so the D-pad and the keyboard keep the game's own step, reduction included. The fraction under 1 is carried. Shaping is the deadzone remap and `StickCurve`. Stick up is a negative `LeftAxisY`, and forward is the positive halfword. Strafe right and turn right are positive. `Analog` off leaves the digital steps. Mouse turn still adds.
+
+The walk latch is "func_80113E80 ran". It is published on the pre of `func_800B0770` when `RA` is `0x80014444`, the one VSync at the end of `func_8001441C`. Present polls during that call, after the pre, and the post writes the pad buffer. `func_80014510` samples it before `func_8001441C` returns, so the next pass's holds are that write. Other VSync callers, including `VSync(-1)`, do not publish the latch. Port 0 then uses `PadWalk` and `Keys` while the latch is set, and the menu set otherwise. The pass that just started walking still sampled the menu set. A pause and any other player state drop back to the menu set on the following pass. The latch is that one function, so menus keep the menu bindings, where the left stick is the D-pad.
+
+Mouse X adds to the yaw, about one digital step per 8 pixels times `MouseSensitivityX`. Mouse Y is discarded. `InvertLookY` and `MouseSensitivityY` stay in the config and this game does not read them. Escape captures the pointer while the window is focused and mouse look is on. A host popup, losing focus, or turning mouse look off releases it. The pointer stays when the tick stops. A pass that is not a walk, and a walk pass whose turn writer did not run (L2, or `func_801185C8` skipped both writers), drains the motion so it does not become the next turn.
+
+The shared walk gamepad binding maps right-stick up and down onto L2 and R2 (`108` beside `100`, `109` beside `101`). That hold is free look, so a tilt would leave the walk writers. Startup removes the pair when both arrays are exactly that, and saves. Reset of the walk gamepad profile writes the shared binding back, and the next launch removes the pair again. Any other combination is left in place. `GamepadBindings.Walk()` itself is unchanged.
+
+The keyboard defaults are already W/S forward, A/D strafe, Q/E turn, with the arrows on the D-pad. The menu set moves the strafe keys onto Left and Right. The existing input page remaps both profiles, the stick axes, the deadzone, and the curve.
+
+These bindings assume control type A: Up and Down move, Left and Right turn, L1 and R1 strafe. Another in-game control type can point logical Up at a different physical hold.
+
+**Measurement:** the formulas match the two writers, and the hooks attach by name on `koku3`. The picture has not been judged.
+
+The sections below describe the King's Field ancestor this tree descended from.
+
 **How the game reads input at all.** It never calls `libpad`. It reads the pad
 through the BIOS (`B(16h) PAD_dr`) via libetc's `PadRead(id)`, which hands back
 `~*(u_long*)buf` — so the word is active **high**, and its two button bytes are in

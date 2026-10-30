@@ -12,46 +12,35 @@ using RecompOne.Runtime.Modding;
 namespace Deception;
 
 /// <summary>
-/// Walk-versus-menu input, plus stick and mouse magnitude on the walk step.
-/// The walking flag is set when the player's free-roam mover, bin_3dmd
-/// func_800DBBCC, ran during the current scheduler pass. That function is
-/// called from kokumei thread func_8002076C, and the game itself skips the
-/// call when halfword 0x80086BBA has bit 0x0010 set. The mode-menu mover
-/// func_800C186C also sets the flag; it is not the control state. The flag is
-/// published at the start of kokumei func_80016028. Guest threads run before
-/// that sample, so the bit the mover just earned is the bit the next frame reads.
+/// Walk-versus-menu input for Kagero, plus stick and mouse magnitude on the
+/// standing step. The walk latch is set when koku3 func_80113E80 ran. That
+/// function is the standing-walk case of the player state switch. The latch is
+/// published on the pre of the frame-end VSync, func_800B0770 when RA is
+/// 0x80014444 (func_8001441C). Other VSync callers, including VSync(-1) polls,
+/// do not publish it: they would clear a latch the next present still needs.
+/// Present polls the pad during that VSync, after the pre, and the post writes
+/// the buffer. func_80014510 then samples it, still inside func_8001441C, so
+/// the next pass's holds are that write. The mover of a pass therefore reads
+/// the previous pass's binding, and the first walk pass still has the menu set.
 ///
-/// Free-roam forward, strafe, and yaw are applied in func_800DBD58, after it
-/// has added its digital step. Full deflection matches the halfword that
-/// function just wrote (turn is 50, or 66 while running). Free-roam look is
-/// func_800DBFB4, which runs after func_800DBBCC on the same player. Its step
-/// is 32, or 64 when pad bit 0x0040 is set, and its clamp is −512..768.
-/// The mode-menu path (180 / 143 / 66 / 32) stays on func_800C4988 and
-/// func_800C44BC, whose look clamp still snaps an unsigned halfword above
-/// 0xFF00 back to −256. A stick between the deadzone and the digital threshold
-/// uses the last full step that axis produced. An idle stick leaves the game
-/// halfword, so the D-pad and the keyboard stay full-step.
+/// func_80114634 writes forward at the vector's +4 and strafe at +0.
+/// func_801148F8 writes yaw at +2. Full deflection matches the unreduced step
+/// from speed byte 0x800E7C53, not the halfword, which a diagonal shrinks.
+/// s = (byte + 0x32) &amp; 0xFF. Forward is s, back is the game's /10 of 3*s,
+/// strafe is the same of 4*s. Turn is the raw byte while L1 or R1 is held, and
+/// the /10 of byte&lt;&lt;3 otherwise. An idle stick leaves the halfword, so the
+/// D-pad and the keyboard stay on the game's step. The fraction under 1 carries.
 ///
-/// Mouse motion is summed by the host until the first walk hook of a logic
-/// pass takes it. Later hooks in that pass read the same snapshot. Yaw reads
-/// X once. Each look path reads Y once, so a mode-menu look cannot spend the
-/// free-roam look. The sample hook drains a pass that never took, so menu
-/// motion does not become the next walk step, and it does not drain during a
-/// walk pass. Capture hides the cursor and locks it inside the window:
-/// HostWindow asks for raw mode, which is GLFW's disabled cursor plus raw
-/// motion, and falls back to the disabled cursor. Escape captures and
-/// releases while the window is focused and no host popup is open. Dialog
-/// and a door keep the pointer, because the mover stopping is not a menu.
-/// A host popup, losing focus, or turning mouse look off releases. A click
-/// does not capture.
-/// Scripted pad playback (0x80086BBA bit 0x0200) leaves the digital steps and
-/// still consumes the pass's mouse. A cleared Analog setting leaves the stick
-/// steps; mouse look is its own setting. Playback also keeps the retail rule
-/// that a blocked mode-menu probe drops the turn. Outside playback, that
-/// dropped turn is written to player+0xE with the mover's 12-bit mask. The
-/// position stays blocked. Free-roam already adds its turn after the probe,
-/// so this split is only on func_800C4554. A scripted pitch return
-/// (0x80101490) is left alone until the player looks, and that look cancels it.
+/// Holding L2 skips both writers. func_801130F0 then runs func_80117444, the
+/// retail free look. That path is not scaled. Right-stick Y and mouse Y are
+/// unbound. The stock walk binding puts right-stick up/down on L2/R2, and a
+/// tilt would hold free look, so startup removes that exact pair.
+///
+/// Mouse X is about one digital turn per eight pixels, times MouseSensitivityX.
+/// A pass whose turn writer did not run discards the motion, so releasing L2
+/// does not dump it as a turn. Escape captures while focused and mouse look is
+/// on. A host popup, focus loss, or mouse look off releases. The pointer stays
+/// when the tick stops. Picture not judged.
 /// </summary>
 public static class InputSupport
 {
@@ -62,70 +51,40 @@ public static class InputSupport
         Version = "1",
     };
 
-    const float ForwardStep = 180f;
-    const float StrafeStep = 143f;
-    const float TurnStep = 66f;
-    const float LookStep = 32f;
+    // func_8001441C's call. The pre sees this RA; LibEtc.VSync does not rewrite it.
+    const uint FrameVSyncReturn = 0x80014444u;
 
-    // One digital turn is about eight pixels. Look moves four units a pixel.
-    // MouseSensitivityX / Y scale those rates. The stored halfword is the limit.
-    const float MouseTurnPerPixel = 8f;
-    const float MouseLookPerPixel = 4f;
+    const uint SpeedByte = 0x800E7C53u;
+    // Live hold pointers. 0x800D0000 - 0x4838 is L1, - 0x4830 is R1.
+    const uint L1Slot = 0x800CB7C8u;
+    const uint R1Slot = 0x800CB7D0u;
 
-    // Mode-menu look, func_800C44BC. Spawn writes −256. Below −512 becomes
-    // −512, and an unsigned halfword above 0xFF00 becomes −256.
-    const int MenuLookMin = -512;
-    const ushort MenuLookTop = 0xFF00;
-
-    // Free-roam look, func_800DBFB4. Below −512 becomes −512. Below 769 stays.
-    // Anything else becomes 768. This band is wider than the mode menu.
-    const int FreeLookMin = -512;
-    const int FreeLookMax = 768;
-
-    const uint PlaybackWord = 0x80086BBAu;
-    const ushort PlaybackBit = 0x0200;
-    const uint LookScriptPointer = 0x80101490u;
-    const uint PadWord = 0x800A1AE8u;
-    const ushort FreeLookFastBit = 0x0040;
+    const uint WalkTick = 0x80113E80u;
+    const uint StepFn = 0x80114634u;
+    const uint TurnFn = 0x801148F8u;
 
     static volatile bool _latched;
     static volatile bool _walking;
-    static bool _inPlayerMove;
 
-    static float _fwdCarry, _strafeCarry, _turnCarry, _menuLookCarry, _freeLookCarry;
-    static int _fwdFull, _strafeFull, _turnFull;
-    static uint _lookPtr;
-    static short _lookBefore;
-    static uint _freeLookPtr;
-    static short _freeLookBefore;
-    static uint _freeVecA, _freeVecB;
+    static float _fwdCarry, _strafeCarry, _turnCarry;
+    static uint _stepVec, _turnVec;
 
-    // func_800C4554 drops the turn with the move when the probe returns 1.
-    // The pre saves the yaw; OnMove saves the turn halfword after any analog
-    // replace; the post writes it back only when the function itself did not.
-    static uint _menuPlayer;
-    static short _menuYaw;
-    static short _menuTurn;
-
-    // One take per logic pass. Yaw is spent once. Each look path spends Y on
-    // its own pitch, so one path cannot drop the other's.
+    // One take per pass. The turn writer spends X. A pass that skips it discards.
     static bool _motionTaken;
-    static float _tickDx, _tickDy;
-    static bool _turnUsed, _freeLookSpent, _menuLookSpent;
+    static bool _turnRan;
+    static bool _turnUsed;
+    static float _tickDx;
 
-    // func_800DBD58 adds these halfwords onto the two stack vectors, then the
-    // caller rotates them. They are the digital step for this frame.
-    const uint FreeForwardDelta = 0x80065844;
-    const uint FreeStrafeDelta = 0x80065854;
-    const uint FreeTurnDelta = 0x80065864;
-
-    /// <summary>True when the player was walking on the last completed scheduler pass.</summary>
+    /// <summary>True when the standing walk tick ran on the last completed pass.</summary>
     public static bool Walking => _walking;
 
     static int _installOnce;
     static bool _armed;
     static bool _padLive;
     static bool _padAnnounced;
+    static bool _moveAnnounced;
+    static bool _moveMissLogged;
+    static bool _padQueued;
 
     // func_80014290 passes these to func_800C0A28. 0x22 bytes apart.
     const uint Pad0 = 0x800D4958u;
@@ -136,9 +95,10 @@ public static class InputSupport
     public static void Install()
     {
         if (Interlocked.Exchange(ref _installOnce, 1) != 0) return;
-        // The live Entry does not call this, and SymbolRegistry is empty until
-        // the boot overlays are registered. The load event is after both.
-        HookAttach.OnOverlayLoad("input", Attach, "The host pad will not reach the game.");
+        // koku3 loads after main. Keep trying until the pad hooks and the walk
+        // hooks have both committed.
+        HookAttach.OnOverlayLoad("input", Attach,
+            "The host pad and the walk sticks will not reach the game.", 48);
     }
 
     static bool Attach()
@@ -146,23 +106,24 @@ public static class InputSupport
         SymbolRegistry.Build();
         if (!_armed)
         {
-            _armed = true;
             Arm();
+            _armed = true;
         }
 
-        return AttachPad();
+        return AttachPad() && AttachMove();
     }
 
     static void Arm()
     {
         MigrateStockKeys();
         EnsureMenuKeys();
+        UnbindStockLook();
 
         // Port 0 ignores PadKind. Pad is the menu set and PadWalk is the walk
-        // set. Both keep the default axis indices, so the four axis bytes stay
-        // on LeftX/LeftY/RightX/RightY. Magnitude reads the raw floats, not the
-        // button bits, so either table still scales. The keyboard splits on
-        // the same walk latch: Keys while walking, KeysMenu otherwise.
+        // set. Both keep the default axis indices, so the four axis floats stay
+        // on LeftX/LeftY/RightX/RightY. Magnitude reads those floats, not the
+        // button bits. The keyboard splits on the same latch: Keys while
+        // walking, KeysMenu otherwise.
         ConfigManager.Port0PadBindings = () =>
         {
             var game = ConfigManager.Game;
@@ -177,136 +138,37 @@ public static class InputSupport
         };
 
         // Escape toggles the pointer while focused and mouse look is on. A
-        // host popup or focus loss releases it. Dialog does not. The listener
-        // runs on the window thread, which is the only thread GLFW will
-        // change the cursor on.
+        // host popup or focus loss releases it. The listener runs on the
+        // window thread, which is the only thread GLFW will change the cursor on.
         Event.AddListener<KeyboardEvent>(OnKeyboard);
         HostWindow.FocusChanged += focused =>
         {
             if (!focused) HostWindow.MouseCaptured = false;
         };
+    }
 
-        SymbolRegistry.Build();
-        var flags = BindingFlags.Public | BindingFlags.Static;
-        var self = typeof(InputSupport);
-        var hooked = false;
+    /// <summary>
+    /// The shared walk binding maps right-stick up/down onto L2/R2. L2 held
+    /// is free look and skips the step writers, so that pair is removed when
+    /// it is exactly the stock one. A player who bound a different combination
+    /// keeps it. Reset writes the stock pair back; the next launch removes it.
+    /// </summary>
+    static void UnbindStockLook()
+    {
+        var pad = ConfigManager.Game.PadWalk;
+        if (pad.L2 is not [100, 108] || pad.R2 is not [101, 109]) return;
 
-        var roam = SymbolRegistry.Resolve("bin_3dmd", null, 0x800DBBCCu);
-        var menuWalk = SymbolRegistry.Resolve("bin_3dmd", null, 0x800C186Cu);
-        var sample = SymbolRegistry.Resolve("kokumei", null, 0x80016028u);
-        var roamOk = roam?.Name == "func_800DBBCC";
-        var menuWalkOk = menuWalk?.Name == "func_800C186C";
-        if (sample?.Name == "func_80016028" && (roamOk || menuWalkOk))
-        {
-            if (roamOk)
-            {
-                HookManager.AddPre(Self, roam!, self.GetMethod(nameof(OnPlayerMoveBefore), flags)!);
-                HookManager.AddPost(Self, roam!, self.GetMethod(nameof(OnWalk), flags)!);
-            }
-            if (menuWalkOk)
-                HookManager.AddPost(Self, menuWalk!, self.GetMethod(nameof(OnWalk), flags)!);
-            HookManager.AddPre(Self, sample, self.GetMethod(nameof(OnSample), flags)!);
-            hooked = true;
-            Console.WriteLine(
-                "[Deception] input: walk detector hooked " +
-                (roamOk ? "func_800DBBCC" : "missing func_800DBBCC") +
-                " (free roam) and " +
-                (menuWalkOk ? "func_800C186C" : "missing func_800C186C") +
-                " (mode menu), sampled at func_80016028.");
-        }
-        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd") || Dispatcher.Overlays.ContainsKey("kokumei"))
-        {
-            Console.Error.WriteLine(
-                $"[Deception] input: walk detector did not resolve " +
-                $"(bin_3dmd 0x800DBBCC={(roam == null ? "missing" : roam.Name)}, " +
-                $"bin_3dmd 0x800C186C={(menuWalk == null ? "missing" : menuWalk.Name)}, " +
-                $"kokumei 0x80016028={(sample == null ? "missing" : sample.Name)}). " +
-                "Port 0 stays on the menu pad bindings.");
-        }
-
-        var freeStep = SymbolRegistry.Resolve("bin_3dmd", null, 0x800DBD58u);
-        if (freeStep?.Name == "func_800DBD58")
-        {
-            HookManager.AddPre(Self, freeStep, self.GetMethod(nameof(OnFreeMoveBefore), flags)!);
-            HookManager.AddPost(Self, freeStep, self.GetMethod(nameof(OnFreeMove), flags)!);
-            hooked = true;
-        }
-        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
-        {
-            Console.Error.WriteLine(
-                $"[Deception] input: free-roam step hook did not resolve " +
-                $"(func_800DBD58={(freeStep == null ? "missing" : freeStep.Name)}).");
-        }
-
-        var freeLook = SymbolRegistry.Resolve("bin_3dmd", null, 0x800DBFB4u);
-        if (freeLook?.Name == "func_800DBFB4")
-        {
-            HookManager.AddPre(Self, freeLook, self.GetMethod(nameof(OnFreeLookBefore), flags)!);
-            HookManager.AddPost(Self, freeLook, self.GetMethod(nameof(OnFreeLook), flags)!);
-            hooked = true;
-            Console.WriteLine(
-                "[Deception] input: free-roam stick scales the step func_800DBD58 just wrote, " +
-                "and look scales the step func_800DBFB4 just wrote. " +
-                "Mouse X turns and mouse Y looks. Escape captures and releases.");
-        }
-        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
-        {
-            Console.Error.WriteLine(
-                $"[Deception] input: free-roam look hook did not resolve " +
-                $"(func_800DBFB4={(freeLook == null ? "missing" : freeLook.Name)}).");
-        }
-
-        var move = SymbolRegistry.Resolve("bin_3dmd", null, 0x800C4988u);
-        var look = SymbolRegistry.Resolve("bin_3dmd", null, 0x800C44BCu);
-        var moveOk = move?.Name == "func_800C4988";
-        var lookOk = look?.Name == "func_800C44BC";
-        if (moveOk)
-            HookManager.AddPost(Self, move!, self.GetMethod(nameof(OnMove), flags)!);
-        if (lookOk)
-        {
-            HookManager.AddPre(Self, look!, self.GetMethod(nameof(OnLookBefore), flags)!);
-            HookManager.AddPost(Self, look!, self.GetMethod(nameof(OnLook), flags)!);
-        }
-
-        var menuBody = SymbolRegistry.Resolve("bin_3dmd", null, 0x800C4554u);
-        if (menuBody?.Name == "func_800C4554")
-        {
-            HookManager.AddPre(Self, menuBody, self.GetMethod(nameof(OnMenuMoveBefore), flags)!);
-            HookManager.AddPost(Self, menuBody, self.GetMethod(nameof(OnMenuMoveAfter), flags)!);
-            hooked = true;
-            Console.WriteLine(
-                "[Deception] input: a blocked mode-menu probe still applies the turn at player+0xE.");
-        }
-        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
-        {
-            Console.Error.WriteLine(
-                $"[Deception] input: mode-menu mover hook did not resolve " +
-                $"(func_800C4554={(menuBody == null ? "missing" : menuBody.Name)}).");
-        }
-
-        if (moveOk && lookOk)
-        {
-            hooked = true;
-            Console.WriteLine(
-                "[Deception] input: mode-menu stick scales that step (full deflection is " +
-                "180 forward, 143 strafe, 66 turn, 32 look).");
-        }
-        else if (Dispatcher.Overlays.ContainsKey("bin_3dmd"))
-        {
-            Console.Error.WriteLine(
-                $"[Deception] input: mode-menu analog hooks did not resolve " +
-                $"(func_800C4988={(move == null ? "missing" : move.Name)}, " +
-                $"func_800C44BC={(look == null ? "missing" : look.Name)}).");
-        }
-
-        if (hooked) HookManager.Commit();
+        pad.L2 = [100];
+        pad.R2 = [101];
+        ConfigManager.SaveGame();
+        Console.WriteLine(
+            "[Deception] input: walk pad dropped right-stick up/down from L2/R2, " +
+            "so a tilt does not hold free look.");
     }
 
     /// <summary>
     /// func_800C0A28 installs the two libpad buffers. Publishing before it
-    /// returns would race the 0xFF fill. The VSync thunk is func_800B0770,
-    /// which returns after the vblank IRQ, so this write is the last one the
-    /// next func_80014510 sees.
+    /// returns would race the 0xFF fill. The VSync thunk is func_800B0770.
     /// </summary>
     static bool AttachPad()
     {
@@ -315,17 +177,68 @@ public static class InputSupport
         if (init?.Name != "func_800C0A28" || vsync?.Name != "func_800B0770")
             return false;
 
+        if (!_padQueued)
+        {
+            var flags = BindingFlags.Public | BindingFlags.Static;
+            var self = typeof(InputSupport);
+            // Pre and post share one registration. Queue both before any retry,
+            // or the pre's registration would hide the post.
+            HookManager.AddPre(Self, vsync, self.GetMethod(nameof(OnPadVSyncBefore), flags)!);
+            HookManager.AddPost(Self, init, self.GetMethod(nameof(OnPadReady), flags)!);
+            HookManager.AddPost(Self, vsync, self.GetMethod(nameof(OnPadVSync), flags)!);
+            _padQueued = true;
+        }
+
+        HookManager.Commit();
+        return HookManager.IsCommitted(init) && HookManager.IsCommitted(vsync);
+    }
+
+    static bool AttachMove()
+    {
+        var tick = SymbolRegistry.Resolve("koku3", null, WalkTick);
+        var step = SymbolRegistry.Resolve("koku3", null, StepFn);
+        var turn = SymbolRegistry.Resolve("koku3", null, TurnFn);
+        if (tick?.Name != "func_80113E80" || step?.Name != "func_80114634" || turn?.Name != "func_801148F8")
+        {
+            if (!_moveMissLogged && Dispatcher.Overlays.ContainsKey("koku3"))
+            {
+                _moveMissLogged = true;
+                Console.Error.WriteLine(
+                    "[Deception] input: walk hooks did not resolve " +
+                    $"(0x80113E80={(tick == null ? "missing" : tick.Name)}, " +
+                    $"0x80114634={(step == null ? "missing" : step.Name)}, " +
+                    $"0x801148F8={(turn == null ? "missing" : turn.Name)}).");
+            }
+
+            return false;
+        }
+
         var flags = BindingFlags.Public | BindingFlags.Static;
         var self = typeof(InputSupport);
-        if (!HookManager.IsRegistered(init))
-            HookManager.AddPost(Self, init, self.GetMethod(nameof(OnPadReady), flags)!);
-        if (!HookManager.IsRegistered(vsync))
-            HookManager.AddPost(Self, vsync, self.GetMethod(nameof(OnPadVSync), flags)!);
+        if (!HookManager.IsRegistered(tick))
+            HookManager.AddPost(Self, tick, self.GetMethod(nameof(OnWalkTick), flags)!);
+        if (!HookManager.IsRegistered(step))
+        {
+            HookManager.AddPre(Self, step, self.GetMethod(nameof(OnStepBefore), flags)!);
+            HookManager.AddPost(Self, step, self.GetMethod(nameof(OnStep), flags)!);
+        }
+
+        if (!HookManager.IsRegistered(turn))
+        {
+            HookManager.AddPre(Self, turn, self.GetMethod(nameof(OnTurnBefore), flags)!);
+            HookManager.AddPost(Self, turn, self.GetMethod(nameof(OnTurn), flags)!);
+        }
+
         HookManager.Commit();
-        var committed = HookManager.IsCommitted(init) && HookManager.IsCommitted(vsync);
-        if (committed)
+        var committed = HookManager.IsCommitted(tick) && HookManager.IsCommitted(step) && HookManager.IsCommitted(turn);
+        if (committed && !_moveAnnounced)
+        {
+            _moveAnnounced = true;
             Console.WriteLine(
-                "[Deception] input: host pad publishes into 0x800D4958 after VSync.");
+                "[Deception] input: koku3 walk scales func_80114634 (forward at +4, strafe at +0) " +
+                "and func_801148F8 (turn at +2). Mouse X turns. Right-stick Y and mouse Y stay unbound.");
+        }
+
         return committed;
     }
 
@@ -335,10 +248,49 @@ public static class InputSupport
         PublishPad(m);
     }
 
+    /// <summary>
+    /// Pre of func_800B0770. The frame-end call's RA is 0x80014444. Publishing
+    /// here is before Present polls, so the post writes the walk or menu set
+    /// the mover just earned. Any other caller leaves the latch for that call.
+    /// </summary>
+    public static void OnPadVSyncBefore(CpuContext c, IMemory m)
+    {
+        if (c.RA != FrameVSyncReturn) return;
+        PublishWalk();
+    }
+
     public static void OnPadVSync(CpuContext c, IMemory m)
     {
         if (!_padLive) return;
         PublishPad(m);
+    }
+
+    static void PublishWalk()
+    {
+        var now = _latched;
+        _latched = false;
+        _walking = now;
+        _turnRan = false;
+
+        // The walk hooks already consumed this pass's motion. Drain here only
+        // when they did not, so menu motion does not become the next turn.
+        if (!now && !_motionTaken)
+            HostWindow.TakeMouseMotion();
+
+        _motionTaken = false;
+        _tickDx = 0f;
+        _turnUsed = false;
+
+        var mouse = MouseOn();
+        if (!mouse || !HostWindow.Focused || PopupManager.AnyOpen)
+        {
+            if (HostWindow.MouseCaptured) HostWindow.MouseCaptured = false;
+        }
+
+        // Show the label while walking, and while the pointer is still held
+        // after the tick stops. A host popup hides it.
+        HostWindow.MouseCaptureHud = mouse && !PopupManager.AnyOpen &&
+                                      (now || HostWindow.MouseCaptured);
     }
 
     static void PublishPad(IMemory m)
@@ -388,163 +340,79 @@ public static class InputSupport
         m.WriteU8(buf + 7, analog ? ly : (byte)0x80);
     }
 
-    /// <summary>Pre-hook. Only the step inside func_800DBBCC may spend mouse yaw.</summary>
-    public static void OnPlayerMoveBefore(CpuContext c, IMemory m) => _inPlayerMove = true;
-
-    /// <summary>Post-hook. The walk/look function ran, so this pass is a walk pass.</summary>
-    public static void OnWalk(CpuContext c, IMemory m)
+    /// <summary>Post of func_80113E80. This pass is a walk pass. L2, and the gate
+    /// func_801185C8, skip the turn writer; drop the mouse so it cannot burst.</summary>
+    public static void OnWalkTick(CpuContext c, IMemory m)
     {
         _latched = true;
-        _inPlayerMove = false;
+        if (!_turnRan) DiscardMotion();
     }
+
+    /// <summary>Pre of func_80114634. The body reassigns A0.</summary>
+    public static void OnStepBefore(CpuContext c, IMemory m) => _stepVec = c.A0;
 
     /// <summary>
-    /// Pre-hook on the scheduler's pad sample. Publish the latch, then clear
-    /// it. Dialog and a door stop the mover and keep the pointer. Returning
-    /// normally lets func_80016028, including PAD_dr, run.
+    /// Post of func_80114634. A live left stick replaces the halfword with the
+    /// unreduced full step times the shaped axis. Forward and back have
+    /// different full steps. An idle axis leaves the game's halfword.
     /// </summary>
-    public static void OnSample(CpuContext c, IMemory m)
+    public static void OnStep(CpuContext c, IMemory m)
     {
-        var now = _latched;
-        _latched = false;
-        _walking = now;
-        _inPlayerMove = false;
-
-        // The walk hooks already consumed this pass's motion. Drain here only
-        // when they did not run, so menu motion does not become the first step.
-        // A walk pass leaves whatever arrived after the mover for the next tick.
-        if (!now && !_motionTaken)
-            HostWindow.TakeMouseMotion();
-        if (!now)
-            _fwdFull = _strafeFull = _turnFull = 0;
-
-        _motionTaken = false;
-        _tickDx = _tickDy = 0f;
-        _turnUsed = _freeLookSpent = _menuLookSpent = false;
-
-        // Escape toggles on its own edge. A held Escape must not undo that.
-        // The mover stops for dialog and for a door. That is not a menu, so
-        // the pointer stays. Focus loss, mouse look off, or a host popup
-        // releases it.
-        var mouse = MouseOn();
-        if (!mouse || !HostWindow.Focused || PopupManager.AnyOpen)
-        {
-            if (HostWindow.MouseCaptured) HostWindow.MouseCaptured = false;
-        }
-
-        // Show the label while walking, and while the pointer is still held
-        // through dialog or a door. A host popup hides it.
-        HostWindow.MouseCaptureHud = mouse && !PopupManager.AnyOpen &&
-                                      (now || HostWindow.MouseCaptured);
-    }
-
-    /// <summary>Pre-hook. func_800DBD58 clobbers A0 and A1 before it returns.</summary>
-    public static void OnFreeMoveBefore(CpuContext c, IMemory m)
-    {
-        _freeVecA = c.A0;
-        _freeVecB = c.A1;
-    }
-
-    /// <summary>
-    /// Post-hook on the free-roam step. The digital halfwords are already in
-    /// the vectors. A live stick replaces that contribution with a fraction of
-    /// the same magnitude. Mouse X is added to the turn on the player call.
-    /// </summary>
-    public static void OnFreeMove(CpuContext c, IMemory m)
-    {
-        if (PlaybackOn(m))
-        {
-            if (_inPlayerMove)
-            {
-                DiscardMotion();
-                _fwdCarry = _strafeCarry = _turnCarry = 0f;
-            }
-            return;
-        }
-
-        var turnMouse = 0f;
-        if (_inPlayerMove)
-            turnMouse = TakeTurnMouse();
-
         if (!ConfigManager.Game.Analog)
         {
             _fwdCarry = _strafeCarry = 0f;
-            if (_inPlayerMove && turnMouse != 0f)
-                ScaleInto(m, _freeVecB, 2u, FreeTurnDelta, 0f, ref _turnCarry, ref _turnFull, turnMouse);
-            else
-                _turnCarry = 0f;
             return;
         }
 
-        ScaleInto(m, _freeVecA, 4u, FreeForwardDelta, Shape(-Controller.LeftAxisY), ref _fwdCarry, ref _fwdFull, 0f);
-        ScaleInto(m, _freeVecA, 0u, FreeStrafeDelta, Shape(Controller.LeftAxisX), ref _strafeCarry, ref _strafeFull, 0f);
-        ScaleInto(m, _freeVecB, 2u, FreeTurnDelta, Shape(Controller.RightAxisX), ref _turnCarry, ref _turnFull, turnMouse);
+        var vec = _stepVec != 0 ? _stepVec : c.A0;
+        if (vec == 0)
+        {
+            _fwdCarry = _strafeCarry = 0f;
+            return;
+        }
+
+        var s = (m.ReadU8(SpeedByte) + 0x32) & 0xFF;
+        // Stick up is a negative LeftY. Forward is the positive halfword.
+        var y = Shape(-Controller.LeftAxisY);
+        if (y > 0f)
+            Apply(m, vec + 4u, y, s, ref _fwdCarry);
+        else if (y < 0f)
+            Apply(m, vec + 4u, y, Tenth(3 * s), ref _fwdCarry);
+        else
+            _fwdCarry = 0f;
+
+        var x = Shape(Controller.LeftAxisX);
+        if (x != 0f)
+            Apply(m, vec, x, Tenth(4 * s), ref _strafeCarry);
+        else
+            _strafeCarry = 0f;
     }
 
-    /// <summary>Pre-hook. The free-roam look halfword is about to change.</summary>
-    public static void OnFreeLookBefore(CpuContext c, IMemory m)
-    {
-        _freeLookPtr = c.A0;
-        _freeLookBefore = c.A0 == 0 ? (short)0 : ReadI16(m, c.A0 + 0x14u);
-    }
+    /// <summary>Pre of func_801148F8. A0 is the output vector.</summary>
+    public static void OnTurnBefore(CpuContext c, IMemory m) => _turnVec = c.A0;
 
     /// <summary>
-    /// Post-hook on func_800DBFB4. A scripted pitch return (pointer 0x80101490)
-    /// is left alone until the player looks, and that look clears it. Otherwise
-    /// a live stick or a mouse replaces the step from the pitch this call
-    /// started with, then this function's own clamp runs.
+    /// Post of func_801148F8. A live right stick replaces the yaw step. Mouse X
+    /// is added either way. Shoulders up use the faster turn, matching the
+    /// writer: a stick strafe past the button threshold holds L1 or R1.
     /// </summary>
-    public static void OnFreeLook(CpuContext c, IMemory m)
+    public static void OnTurn(CpuContext c, IMemory m)
     {
-        if (PlaybackOn(m))
+        _turnRan = true;
+        var vec = _turnVec != 0 ? _turnVec : c.A0;
+        if (vec == 0)
         {
+            _turnCarry = 0f;
             DiscardMotion();
-            _freeLookCarry = 0f;
             return;
         }
 
-        var mouse = TakeLookMouse(ref _freeLookSpent);
-        var ry = ConfigManager.Game.Analog ? LookStick() : 0f;
-        var ptr = _freeLookPtr != 0 ? _freeLookPtr : c.A0;
-        if (ptr == 0)
-        {
-            _freeLookCarry = 0f;
-            return;
-        }
-
-        // The return-to-level ignores look buttons, and the old hook ate mouse
-        // Y for as long as the pointer stayed set. Turn had already been
-        // applied. Cancelling on a real look is what lets the mouse pitch
-        // again without waiting for the stick.
-        if (m.ReadU32(LookScriptPointer) != 0)
-        {
-            if (ry == 0f && mouse == 0f)
-            {
-                _freeLookCarry = 0f;
-                return;
-            }
-
-            m.WriteU32(LookScriptPointer, 0);
-            WriteFreeLook(m, ptr, ReadI16(m, ptr + 0x14u), ry, mouse);
-            return;
-        }
-
-        if (ry == 0f && mouse == 0f)
-        {
-            _freeLookCarry = 0f;
-            return;
-        }
-
-        WriteFreeLook(m, ptr, _freeLookBefore, ry, mouse);
-    }
-
-    static void WriteFreeLook(IMemory m, uint ptr, int basis, float ry, float mouse)
-    {
-        var step = (m.ReadU16(PadWord) & FreeLookFastBit) != 0 ? 64f : 32f;
-        var sum = ry * step + mouse + _freeLookCarry;
-        var whole = (int)sum;
-        _freeLookCarry = sum - whole;
-        m.WriteU16(ptr + 0x14u, (ushort)(short)ClampFreeLook(basis + whole));
+        var raw = (int)m.ReadU8(SpeedByte);
+        var full = Held(m, L1Slot) || Held(m, R1Slot) ? raw : Tenth(raw << 3);
+        var perPixel = full > 0 ? full / 8f : 8f;
+        var mouse = TakeTurnMouse(perPixel);
+        var shaped = ConfigManager.Game.Analog ? Shape(Controller.RightAxisX) : 0f;
+        Apply(m, vec + 2u, shaped, full, ref _turnCarry, mouse);
     }
 
     static void OnKeyboard(KeyboardEvent e)
@@ -552,123 +420,6 @@ public static class InputSupport
         if (!e.Pressed || e.Repeat || e.Key != (int)Silk.NET.Input.Key.Escape) return;
         if (PopupManager.AnyOpen || !HostWindow.Focused || !MouseOn()) return;
         HostWindow.MouseCaptured = !HostWindow.MouseCaptured;
-    }
-
-    /// <summary>Pre-hook. func_800C4554 is about to build the move and the turn.</summary>
-    public static void OnMenuMoveBefore(CpuContext c, IMemory m)
-    {
-        _menuPlayer = c.A0;
-        _menuYaw = c.A0 == 0 ? (short)0 : ReadI16(m, c.A0 + 0xEu);
-        _menuTurn = 0;
-    }
-
-    /// <summary>
-    /// Post-hook. A probe return of 1 leaves both the move and the yaw unstored
-    /// (bin_3dmd.cs L800C4970). The turn halfword is still the one func_800C4988
-    /// and OnMove wrote. Apply that yaw with the same 12-bit mask the success
-    /// path uses, and leave the position alone. Playback keeps the retail drop.
-    /// A yaw the function already changed is left as it stored it.
-    /// </summary>
-    public static void OnMenuMoveAfter(CpuContext c, IMemory m)
-    {
-        if ((m.ReadU16(PlaybackWord) & PlaybackBit) != 0) return;
-        if (_menuPlayer == 0 || _menuTurn == 0) return;
-        var addr = _menuPlayer + 0xEu;
-        if (ReadI16(m, addr) != _menuYaw) return;
-        var applied = (_menuYaw + _menuTurn) & 0x0FFF;
-        m.WriteU16(addr, (ushort)applied);
-    }
-
-    /// <summary>
-    /// Post-hook on the mode-menu step writer. Replaces a component the stick
-    /// is driving and adds mouse X to the turn. vecA+2, vecB+0, and vecB+4 stay 0.
-    /// </summary>
-    public static void OnMove(CpuContext c, IMemory m)
-    {
-        if (PlaybackOn(m))
-        {
-            DiscardMotion();
-            _fwdCarry = _strafeCarry = _turnCarry = 0f;
-            _menuTurn = c.A1 == 0 ? (short)0 : ReadI16(m, c.A1 + 2u);
-            return;
-        }
-
-        var turnMouse = TakeTurnMouse();
-        var sticks = ConfigManager.Game.Analog;
-        if (c.A0 != 0 && sticks)
-        {
-            // Stick up is a negative LeftY. Forward is the positive halfword.
-            Apply(m, c.A0 + 4u, Shape(-Controller.LeftAxisY), ForwardStep, ref _fwdCarry);
-            Apply(m, c.A0 + 0u, Shape(Controller.LeftAxisX), StrafeStep, ref _strafeCarry);
-        }
-        else
-        {
-            _fwdCarry = _strafeCarry = 0f;
-        }
-
-        if (c.A1 != 0 && (sticks || turnMouse != 0f))
-        {
-            Apply(m, c.A1 + 2u, sticks ? Shape(Controller.RightAxisX) : 0f, TurnStep, ref _turnCarry, turnMouse);
-            _menuTurn = ReadI16(m, c.A1 + 2u);
-        }
-        else if (c.A1 != 0)
-        {
-            _turnCarry = 0f;
-            _menuTurn = ReadI16(m, c.A1 + 2u);
-        }
-        else
-        {
-            _turnCarry = 0f;
-            _menuTurn = 0;
-        }
-    }
-
-    /// <summary>Pre-hook. The look halfword is about to gain the digital ±32.</summary>
-    public static void OnLookBefore(CpuContext c, IMemory m)
-    {
-        _lookPtr = c.A0;
-        _lookBefore = c.A0 == 0 ? (short)0 : ReadI16(m, c.A0 + 0x14u);
-    }
-
-    /// <summary>
-    /// Post-hook. A live right stick replaces the ±32 this function just applied.
-    /// Mouse Y is added to whichever value won, then the mode-menu clamp runs.
-    /// </summary>
-    public static void OnLook(CpuContext c, IMemory m)
-    {
-        if (PlaybackOn(m))
-        {
-            DiscardMotion();
-            _menuLookCarry = 0f;
-            return;
-        }
-
-        var mouse = TakeLookMouse(ref _menuLookSpent);
-        var ptr = _lookPtr != 0 ? _lookPtr : c.A0;
-        if (ptr == 0)
-        {
-            _menuLookCarry = 0f;
-            return;
-        }
-
-        var addr = ptr + 0x14u;
-        var ry = ConfigManager.Game.Analog ? LookStick() : 0f;
-        int look;
-        if (ry == 0f && mouse == 0f)
-        {
-            _menuLookCarry = 0f;
-            look = ReadI16(m, addr);
-        }
-        else
-        {
-            var basis = ry != 0f ? _lookBefore : (int)ReadI16(m, addr);
-            var sum = (ry != 0f ? ry * LookStep : 0f) + mouse + _menuLookCarry;
-            var whole = (int)sum;
-            _menuLookCarry = sum - whole;
-            look = basis + whole;
-        }
-
-        m.WriteU16(addr, (ushort)(short)ClampMenuLook(look));
     }
 
     /// <summary>
@@ -701,14 +452,26 @@ public static class InputSupport
 
     static bool MouseOn() => ConfigManager.Game.MouseLook;
 
-    /// <summary>The scripted pad stream keeps the digital step and the mouse.</summary>
-    static bool PlaybackOn(IMemory m) => (m.ReadU16(PlaybackWord) & PlaybackBit) != 0;
+    static bool Held(IMemory m, uint slot)
+    {
+        var ptr = m.ReadU32(slot);
+        return ptr != 0 && m.ReadU16(ptr) != 0;
+    }
 
-    /// <summary>The pass's mouse, taken on the first walk hook and reused after that.</summary>
+    /// <summary>
+    /// HI of the signed multiply by 0x66666667, then arithmetic &gt;&gt; 2.
+    /// That is the game's own scale. s = 50 gives Tenth(150) = 15 and Tenth(200) = 20.
+    /// </summary>
+    static int Tenth(int n)
+    {
+        var hi = (int)(((long)n * unchecked((int)0x66666667)) >> 32);
+        return hi >> 2;
+    }
+
     static void EnsureTick()
     {
         if (_motionTaken) return;
-        (_tickDx, _tickDy) = HostWindow.TakeMouseMotion();
+        (_tickDx, _) = HostWindow.TakeMouseMotion();
         _motionTaken = true;
     }
 
@@ -717,33 +480,16 @@ public static class InputSupport
     {
         EnsureTick();
         _turnUsed = true;
-        _freeLookSpent = true;
-        _menuLookSpent = true;
     }
 
-    /// <summary>dx times 8 times MouseSensitivityX. The fraction stays in the turn carry.</summary>
-    static float TakeTurnMouse()
+    /// <summary>dx times one digital turn per eight pixels, times MouseSensitivityX.</summary>
+    static float TakeTurnMouse(float perPixel)
     {
         EnsureTick();
         if (_turnUsed) return 0f;
         _turnUsed = true;
         if (!MouseOn() || !HostWindow.MouseCaptured) return 0f;
-        return _tickDx * MouseTurnPerPixel * SensitivityX();
-    }
-
-    /// <summary>
-    /// Window Y grows downward. Uninverted look-up is negative dy times 4 times
-    /// MouseSensitivityY. InvertLookY flips that sign. Each look path passes
-    /// its own spent flag, and both read the same dy.
-    /// </summary>
-    static float TakeLookMouse(ref bool spent)
-    {
-        EnsureTick();
-        if (spent) return 0f;
-        spent = true;
-        if (!MouseOn() || !HostWindow.MouseCaptured) return 0f;
-        var sign = ConfigManager.Game.InvertLookY ? 1f : -1f;
-        return sign * _tickDy * MouseLookPerPixel * SensitivityY();
+        return _tickDx * perPixel * SensitivityX();
     }
 
     static float SensitivityX()
@@ -751,73 +497,6 @@ public static class InputSupport
         var s = ConfigManager.Game.MouseSensitivityX;
         if (float.IsNaN(s) || s < 0f) return 0f;
         return s;
-    }
-
-    static float SensitivityY()
-    {
-        var s = ConfigManager.Game.MouseSensitivityY;
-        if (float.IsNaN(s) || s < 0f) return 0f;
-        return s;
-    }
-
-    /// <summary>Stick up is negative. Uninverted look-up is positive, matching L2.</summary>
-    static float LookStick()
-    {
-        var axis = Controller.RightAxisY;
-        if (!ConfigManager.Game.InvertLookY)
-            axis = -axis;
-        return Shape(axis);
-    }
-
-    /// <summary>
-    /// Replaces the digital delta <paramref name="deltaAddr"/> that func_800DBD58
-    /// already added to <paramref name="vec"/>+<paramref name="offset"/>. An idle
-    /// stick keeps that delta. A live stick writes the same magnitude times the
-    /// shaped axis, using the last nonzero delta when this frame's button was off.
-    /// </summary>
-    static void ScaleInto(
-        IMemory m, uint vec, uint offset, uint deltaAddr, float shaped,
-        ref float carry, ref int learned, float extra)
-    {
-        if (vec == 0)
-        {
-            carry = 0f;
-            return;
-        }
-
-        var game = (int)ReadI16(m, deltaAddr);
-        if (game != 0) learned = Math.Abs(game);
-        if (shaped == 0f && extra == 0f)
-        {
-            carry = 0f;
-            return;
-        }
-
-        float sum;
-        int desired;
-        if (shaped != 0f)
-        {
-            var full = learned != 0 ? learned : Math.Abs(game);
-            if (full == 0 && extra == 0f)
-            {
-                carry = 0f;
-                return;
-            }
-
-            sum = shaped * full + extra + carry;
-            desired = (int)sum;
-        }
-        else
-        {
-            sum = extra + carry;
-            desired = game + (int)sum;
-        }
-
-        var whole = (int)sum;
-        carry = sum - whole;
-        var fix = desired - game;
-        if (fix != 0)
-            WriteI16(m, vec + offset, ReadI16(m, vec + offset) + fix);
     }
 
     /// <summary>Past the deadzone, remapped so the edge is 0 and ±1 is full.
@@ -852,12 +531,12 @@ public static class InputSupport
     }
 
     /// <summary>
-    /// A live stick overwrites the halfword (the game already added the full
-    /// digital step). An idle stick keeps it and <paramref name="extra"/>, the
-    /// mouse, is added. The fractional part is carried so a slow deflection does
-    /// not truncate to nothing; the carry is dropped when nothing is driving.
-    /// The cast truncates toward zero. A sum past a signed halfword is clamped
-    /// at the store, and that excess is not put back into the carry.
+    /// A live stick overwrites the halfword (the game already added its step).
+    /// An idle stick keeps it, and <paramref name="extra"/>, the mouse, is added.
+    /// The fractional part is carried so a slow deflection does not truncate to
+    /// nothing; the carry is dropped when nothing is driving. The cast truncates
+    /// toward zero. A sum past a signed halfword is clamped at the store, and
+    /// that excess is not put back into the carry.
     /// </summary>
     static void Apply(IMemory m, uint addr, float shaped, float full, ref float carry, float extra = 0f)
     {
@@ -872,25 +551,6 @@ public static class InputSupport
         var whole = (int)sum;
         carry = sum - whole;
         WriteI16(m, addr, basis + whole);
-    }
-
-    /// <summary>func_800C44BC: below −512 becomes −512, and an unsigned halfword
-    /// above 0xFF00 becomes −256.</summary>
-    static int ClampMenuLook(int value)
-    {
-        if (value < MenuLookMin) return MenuLookMin;
-        if (value > short.MaxValue) value = short.MaxValue;
-        var bits = (ushort)(short)value;
-        if (bits > MenuLookTop) return -256;
-        return (short)bits;
-    }
-
-    /// <summary>func_800DBFB4: below −512 becomes −512, below 769 stays, else 768.</summary>
-    static int ClampFreeLook(int value)
-    {
-        if (value < FreeLookMin) return FreeLookMin;
-        if (value < FreeLookMax + 1) return value;
-        return FreeLookMax;
     }
 
     static short ReadI16(IMemory m, uint addr) => (short)m.ReadU16(addr);

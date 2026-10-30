@@ -1456,7 +1456,9 @@ init has returned, every VSync writes the host pad into the two buffers. Port 0
 is always present, so the keyboard is the pad when no controller is open. The
 bytes are the id (`0x41` or `0x73`), the button halves in wire order (the low
 byte of `Controller.State` at +2), and the sticks at +4..+7 (`RightX`, `RightY`,
-`LeftX`, `LeftY`, or `0x80`).
+`LeftX`, `LeftY`, or `0x80`). The sampler copies those four bytes onward and
+nothing in `koku3` reads them. Walk magnitude is "Kagero: walk, strafe and turn"
+in [INPUT.md](INPUT.md): it scales the halfword the mover writes.
 Port 1 is status `0xFF` unless a second pad is connected. The post is after
 VSync returns, which is after the vblank IRQ, so the write is the one the next
 `func_80014510` reads. `Install` is idempotent and runs from `Program.cs`; the
