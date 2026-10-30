@@ -457,12 +457,15 @@ Neither needs the disc. `.github/workflows/release.yml` runs both on a `v*` tag
 and opens a draft release; it asserts that `generated/` and `disc/` are absent,
 and that the tag is `vMAJOR.MINOR.PATCH`, before it packages anything.
 
-**The release workflow has never run.** The tag pushed to test it was
-`test-win-0.1.0`, which does not match the `tags: ['v*']` trigger, so only `ci`
-fired; and `workflow_dispatch` is not offered for a workflow absent from the
-**default branch**, which `release.yml` still is. So the Windows leg — the
-installer, and the launcher on real Windows — is unexercised. Merging `dist` and
-tagging `v*` is what settles it.
+The first `v*` run was `v0.1.0` (run 41080336423). Linux published, then
+`appimagetool` (continuous, build 333, 2026-10-29) refused the AppDir: 227
+files under `usr/bin`, the published dlls and the host libraries, were mode
+`0744`, and that build of the tool will not package a file the owner can
+execute unless the group and everyone else can too. It created no AppImage.
+`build-appimage.sh` now runs `chmod -R a+rX` on the AppDir before the tool.
+The Windows leg of that run succeeded: the zip and the installer were uploaded
+as the job's artifact. The draft release was not opened, because that job
+waits for both platforms and Linux had failed.
 
 Trimming is off and must stay off: `MonoMod.RuntimeDetour` builds detours at run
 time, `ModCompiler` hands Roslyn the loaded assemblies, and
