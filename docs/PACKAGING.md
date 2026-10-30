@@ -80,11 +80,19 @@ Beside the executable, `content/`:
   no disc bytes. Not `kf2.json`, not the King's Field funcmaps, not
   `config/generated`.
 - `content/border/` — `left-border.jpg` and `right-border.jpg`, drawn beside a 16:9 frame.
-- `content/src/` — `Program.cs`, `InputSupport.cs`, `GraphicsOptions.cs`, `LegacyData.cs`, `WallLod.cs`, `PrimHeap.cs`, `FrameRate.cs` and Verdite
+- `content/src/` — `Program.cs`, `InputSupport.cs`, `GraphicsOptions.cs`, `LegacyData.cs`, `WallLod.cs`, `PrimHeap.cs`, `FrameRate.cs`, `BootPlant.cs`, `IntroCapture.cs` and Verdite
   Core's C# (`tools/verdite-core/src/**`, under `content/src/verdite-core/`), as
   source text. `patches/` and `mods/` are not in the payload. `Sources.All()`
   walks `content/src` recursively, so `GameCompile` compiles core and `BuildKey`
   hashes it. (Core's `launcher/` is the launcher itself, not payload.)
+
+v0.1.0's first-run compile failed with CS0234 on `BootPlant` and `IntroCapture`.
+Both files were in the tree. `Program.cs` calls `IntroCapture.Arm()`, and the
+recompiler's `EntryWriter` emits `Deception.BootPlant.Apply` when the class name
+is `Deception2`. Neither file was a `Content` item, so `content/manifest.txt`
+never listed them and `GameCompile` never compiled them. Dropping the files into
+an install does not help on its own: the launcher compiles only paths the
+manifest names. CI now asserts both, with `GraphicsOptions.cs` and `FrameRate.cs`.
 
 Plus `RecompOne.Runtime.dll`, `recompone.dll`, Roslyn and the self-contained .NET
 runtime. About 109 MB laid out, 41 MB as an AppImage.

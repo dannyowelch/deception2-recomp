@@ -68,6 +68,12 @@
         <Content Include="$(VerditeGameRoot)FrameRate.cs"
                  Link="content/src/FrameRate.cs"
                  CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)BootPlant.cs"
+                 Link="content/src/BootPlant.cs"
+                 CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="$(VerditeGameRoot)IntroCapture.cs"
+                 Link="content/src/IntroCapture.cs"
+                 CopyToOutputDirectory="PreserveNewest" />
         <Content Include="$(VerditeGameRoot)border\*.jpg"
                  LinkBase="content/border"
                  CopyToOutputDirectory="PreserveNewest" />
